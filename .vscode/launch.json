@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Jouer a Clash of Guilds",
+            "request": "launch",
+            "mainClass": "com.mycompany.composite_clash_of_guilds.JeuConsole",
+            "projectName": "composite_clash_of_guilds",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "java",
+            "name": "Tests Clash of Guilds",
+            "request": "launch",
+            "mainClass": "com.mycompany.composite_clash_of_guilds.TestsClashOfGuilds",
+            "projectName": "composite_clash_of_guilds",
+            "console": "integratedTerminal"
+        }
+    ]
+}
