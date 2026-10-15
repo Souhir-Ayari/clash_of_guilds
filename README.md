@@ -8,13 +8,36 @@ Armée → Bataillons → Escouades → Soldats (Guerrier, Archer, Mage, Soigneu
 - Diagramme de classes : [`docs/diagramme_classes.png`](docs/diagramme_classes.png) (source PlantUML : [`docs/diagramme_classes.puml`](docs/diagramme_classes.puml))
 - Compte-rendu + réponses aux questions Q1–Q4 : [`docs/COMPTE_RENDU.md`](docs/COMPTE_RENDU.md)
 
+## Version graphique 2D (bonus)
+
+![Bataille en 2D](docs/captures/attaque_totale.png)
+
+En plus de la version console demandée par le TP, le jeu existe en **2D animée** (Java Swing / Java2D,
+aucune bibliothèque externe, tous les graphismes sont dessinés en code). Elle réutilise **sans aucune
+modification** le modèle Composite (`IUnite`, `Escouade`, feuilles, `Combat`) : seule la couche de
+présentation change, ce qui démontre la séparation métier / présentation.
+
+- Écran titre animé (ciel étoilé, braises, blasons), 3 modes : **3 joueurs**, **solo contre 2 IA**, **démo 3 IA**.
+- Chaque armée est dessinée comme un arbre (Armée → groupes → soldats) avec barres de vie animées.
+- **Attaque Totale** : volée de projectiles depuis chaque soldat vivant (flèches, orbes, lames).
+- **Frappe Ciblée** : choix d'une escouade, puis d'une cible précise avec ligne de visée.
+- **Soins**, dégâts flottants, onde de choc, secousse de l'écran, K.O., guilde « ANÉANTIE », feux d'artifice de victoire.
+- Infobulle au survol : PV, ATQ, synergie +10 %, rôle dans le Composite.
+
+| Écran titre | Frappe ciblée | Victoire |
+|---|---|---|
+| ![](docs/captures/titre.png) | ![](docs/captures/frappe_ciblee.png) | ![](docs/captures/victoire.png) |
+
+Lancement : configuration **« Jouer en 2D (version graphique) »** dans VS Code, ou `jouer2D.bat` (Windows) / `./jouer2D.sh`.
+
 ## Lancer le jeu dans VS Code
 
 1. Installer un **JDK 17 ou plus** et l'extension **Extension Pack for Java**
    (`vscjava.vscode-java-pack`, proposée automatiquement à l'ouverture du dossier).
 2. `Fichier > Ouvrir le dossier...` → choisir le dossier `clash_of_guilds`.
 3. Attendre que VS Code importe le projet (Maven, `pom.xml`).
-4. Onglet **Exécuter et déboguer** (Ctrl+Shift+D) → choisir **« Jouer a Clash of Guilds »** → ▶.
+4. Onglet **Exécuter et déboguer** (Ctrl+Shift+D) → choisir **« Jouer en 2D (version graphique) »**
+   ou **« Jouer en console (version du TP) »** → ▶.
    Le jeu s'ouvre dans le terminal intégré (indispensable pour taper les choix).
    - Ou ouvrir `JeuConsole.java` et cliquer sur **Run** au-dessus de `main`.
    - La configuration **« Tests Clash of Guilds »** lance les 27 vérifications des règles.
@@ -22,8 +45,9 @@ Armée → Bataillons → Escouades → Soldats (Guerrier, Archer, Mage, Soigneu
 ### Sans VS Code (terminal)
 
 ```bash
-./run.sh                      # Linux / macOS
-run.bat                       # Windows
+./run.sh                      # console - Linux / macOS
+run.bat                       # console - Windows
+jouer2D.bat                   # version 2D - Windows (./jouer2D.sh ailleurs)
 ./run.sh TestsClashOfGuilds   # tests des regles
 # ou avec Maven :
 mvn package && java -jar target/composite_clash_of_guilds-1.0.jar
@@ -118,3 +142,7 @@ classDiagram
 | `Recrutement.java` | Bonus : phase de recrutement avec 500 PO |
 | `ParcoursArbre.java`, `Saisie.java` | Outils console (parcours pour menus, saisies contrôlées) |
 | `TestsClashOfGuilds.java` | Vérifications automatiques des règles |
+| `gui/JeuGraphique.java` | Point d'entrée de la version 2D (fenêtre) |
+| `gui/PanneauJeu.java` | Écrans titre / bataille / victoire, interactions, IA, rendu de l'arbre |
+| `gui/Effets.java` | Particules, projectiles, ondes de choc, textes flottants, secousse |
+| `gui/Icones.java`, `gui/Theme.java` | Icônes vectorielles (unités, blasons) et charte graphique |

@@ -3,7 +3,14 @@
     "configurations": [
         {
             "type": "java",
-            "name": "Jouer a Clash of Guilds",
+            "name": "Jouer en 2D (version graphique)",
+            "request": "launch",
+            "mainClass": "com.mycompany.composite_clash_of_guilds.gui.JeuGraphique",
+            "projectName": "composite_clash_of_guilds"
+        },
+        {
+            "type": "java",
+            "name": "Jouer en console (version du TP)",
             "request": "launch",
             "mainClass": "com.mycompany.composite_clash_of_guilds.JeuConsole",
             "projectName": "composite_clash_of_guilds",
