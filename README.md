@@ -7,6 +7,7 @@ Armée → Bataillons → Escouades → Soldats (Guerrier, Archer, Mage, Soigneu
 - Code source : [`src/main/java/com/mycompany/composite_clash_of_guilds`](src/main/java/com/mycompany/composite_clash_of_guilds)
 - Diagramme de classes : [`docs/diagramme_classes.png`](docs/diagramme_classes.png) (source PlantUML : [`docs/diagramme_classes.puml`](docs/diagramme_classes.puml))
 - Compte-rendu + réponses aux questions Q1–Q4 : [`docs/COMPTE_RENDU.md`](docs/COMPTE_RENDU.md)
+- Présentation (17 diapositives, export PowerPoint / PDF depuis la page) : https://claude.ai/artifact/YDBGtoGGsMgWY2nXvMSRtu
 
 ## Version graphique 2D (bonus)
 
