@@ -1,0 +1,126 @@
+@startuml diagramme_classes
+!pragma layout smetana
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam class {
+  BackgroundColor #FFFDF5
+  BorderColor #8A6D1F
+  ArrowColor #2B4C7E
+}
+title Clash of Guilds - Patron Composite (variante Transparence)
+
+package com.mycompany.composite_clash_of_guilds {
+
+  interface IUnite <<Component>> {
+    + getNom() : String
+    + getPointsDeVie() : int
+    + getPointsDeVieMax() : int
+    + getPuissanceAttaque() : int
+    + subirDegats(montant : int) : void
+    + recevoirSoins(montant : int) : void
+    + estVivant() : boolean
+    + getCout() : int
+    + afficherStructure(prefix : String, isDernier : boolean) : void
+    .. Gestion Composite (transparence, default) ..
+    + ajouter(unite : IUnite) : void
+    + supprimer(unite : IUnite) : void
+    + getSousUnites() : List<IUnite>
+    + estComposite() : boolean
+  }
+
+  abstract class UniteElementaire <<Leaf>> {
+    - nom : String
+    - pointsDeVieMax : int
+    - pointsDeVie : int
+    - attaque : int
+    - cout : int
+    + {abstract} getType() : String
+    # calculerDegatsNets(montant : int) : int
+    # detailsSupplementaires() : String
+    + subirDegats(montant : int) : void
+    + getPuissanceAttaque() : int
+    + afficherStructure(prefix : String, isDernier : boolean) : void
+  }
+
+  class Guerrier <<Leaf>> {
+    - armure : int = 5
+    PV 120 | ATQ 25 | 80 PO
+    # calculerDegatsNets(m : int) : int
+  }
+  class Archer <<Leaf>> {
+    PV 75 | ATQ 40 | 70 PO
+  }
+  class Mage <<Leaf>> {
+    PV 50 | ATQ 65 | 100 PO
+  }
+  class Soigneur <<Leaf (bonus)>> {
+    - puissanceSoin : int = 40
+    PV 60 | ATQ 10 | 90 PO
+    + soigner(cible : IUnite) : int
+    + soigner(cible : IUnite, montant : int) : int
+  }
+
+  class Escouade <<Composite>> {
+    - nom : String
+    - membres : List<IUnite>
+    + ajouter(u : IUnite) : void
+    + supprimer(u : IUnite) : void
+    + getSousUnites() : List<IUnite>
+    + getPointsDeVie() : int
+    + getPuissanceAttaque() : int
+    + subirDegats(montant : int) : void
+    + recevoirSoins(montant : int) : void
+    + afficherStructure(prefix : String, isDernier : boolean) : void
+  }
+
+  class Joueur {
+    - nom : String
+    - faction : String
+    - armee : Escouade
+    + estElimine() : boolean
+    + afficherArmee() : void
+  }
+
+  class JeuConsole <<Client>> {
+    - joueurs : List<Joueur>
+    + main(args : String[]) : void
+    - boucleDeJeu() : void
+    - attaqueTotale(j : Joueur) : boolean
+    - frappeCiblee(j : Joueur) : boolean
+  }
+
+  class Combat <<Client>> {
+    + {static} attaquer(attaquant : IUnite, cible : IUnite) : Resultat
+  }
+
+  class Recrutement {
+    + BUDGET_INITIAL : int = 500
+    + recruter(nom : String, faction : String) : Escouade
+  }
+}
+
+IUnite <|.. UniteElementaire
+IUnite <|.. Escouade
+UniteElementaire <|-- Guerrier
+UniteElementaire <|-- Archer
+UniteElementaire <|-- Mage
+UniteElementaire <|-- Soigneur
+Escouade o--> "0..*" IUnite : membres
+Joueur *--> "1" Escouade : armee
+JeuConsole --> "3" Joueur
+JeuConsole ..> Combat
+JeuConsole ..> Recrutement
+Combat ..> IUnite
+
+note right of Escouade
+  getPuissanceAttaque() :
+  somme des ATQ vivantes,
+  x 1.10 si >= 2 membres vivants.
+  subirDegats(m) :
+  part = m / Nvivants (+ reliquat
+  aux premiers), transmise
+  recursivement a chaque membre.
+  ajouter() refuse les cycles.
+end note
+@enduml
