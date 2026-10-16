@@ -97,6 +97,7 @@ public class JeuConsole {
         System.out.println(" - Les degats recus par un groupe sont repartis equitablement et en cascade.");
         System.out.println(" - Guerrier : armure 5 (degats nets = max(1, degats - 5)).");
         System.out.println(" - Soigneur : soigne son escouade (+40 PV repartis, sans depasser le max).");
+        System.out.println(" - Defense : armure +10 pour toute l'armee jusqu'a votre prochain tour.");
         System.out.println(" - La derniere guilde en vie remporte la victoire !");
         System.out.println(EGAUX);
         System.out.println();
@@ -130,6 +131,7 @@ public class JeuConsole {
     }
 
     private void jouerTour(Joueur actif) {
+        Combat.finirDefense(actif.getArmee()); // la posture defensive dure jusqu'a ce tour
         boolean tourTermine = false;
         while (!tourTermine) {
             Escouade armee = actif.getArmee();
@@ -142,17 +144,20 @@ public class JeuConsole {
             System.out.println("  2. Inspecter les armees ennemies");
             System.out.println("  3. Attaque Totale (toute l'armee contre une guilde rivale)");
             System.out.println("  4. Frappe Ciblee (une sous-escouade frappe une cible precise)");
+            System.out.printf("  5. Se defendre (armure +%d pour toute l'armee jusqu'a votre prochain tour)%n",
+                    Combat.BONUS_DEFENSE);
             List<Soigneur> soigneurs = soigneursVivants(armee);
             if (!soigneurs.isEmpty()) {
-                System.out.println("  5. Soigner (un Soigneur restaure les PV de son escouade)");
+                System.out.println("  6. Soigner (un Soigneur restaure les PV de son escouade)");
             }
-            int choix = saisie.lireEntier("Votre action : ", 1, soigneurs.isEmpty() ? 4 : 5);
+            int choix = saisie.lireEntier("Votre action : ", 1, soigneurs.isEmpty() ? 5 : 6);
 
             switch (choix) {
                 case 1 -> actif.afficherArmee();
                 case 2 -> inspecterEnnemis(actif);
                 case 3 -> tourTermine = attaqueTotale(actif);
                 case 4 -> tourTermine = frappeCiblee(actif);
+                case 5 -> tourTermine = defendre(actif);
                 default -> tourTermine = soigner(actif, soigneurs);
             }
         }
@@ -224,6 +229,16 @@ public class JeuConsole {
 
         Combat.Resultat r = Combat.attaquer(attaquant, pointImpact);
         afficherResultat(r, cible);
+        return true;
+    }
+
+    private boolean defendre(Joueur actif) {
+        Combat.defendre(actif.getArmee());
+        System.out.println();
+        System.out.println(EGAUX);
+        System.out.printf(">> [%s] leve les boucliers : armure +%d pour chaque combattant !%n",
+                actif.getFaction(), Combat.BONUS_DEFENSE);
+        System.out.println(EGAUX);
         return true;
     }
 

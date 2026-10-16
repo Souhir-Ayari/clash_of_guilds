@@ -9,27 +9,32 @@ Armée → Bataillons → Escouades → Soldats (Guerrier, Archer, Mage, Soigneu
 - Compte-rendu + réponses aux questions Q1–Q4 : [`docs/COMPTE_RENDU.md`](docs/COMPTE_RENDU.md)
 - Présentation (17 diapositives, export PowerPoint / PDF depuis la page) : https://claude.ai/artifact/YDBGtoGGsMgWY2nXvMSRtu
 
-## Version graphique 2D (bonus)
+## Version graphique 2D : le champ de bataille (bonus)
 
-![Bataille en 2D](docs/captures/attaque_totale.png)
+![Bataille animée](docs/captures/bataille.gif)
 
 En plus de la version console demandée par le TP, le jeu existe en **2D animée** (Java Swing / Java2D,
-aucune bibliothèque externe, tous les graphismes sont dessinés en code). Elle réutilise **sans aucune
-modification** le modèle Composite (`IUnite`, `Escouade`, feuilles, `Combat`) : seule la couche de
-présentation change, ce qui démontre la séparation métier / présentation.
+aucune bibliothèque externe : soldats, décor et effets sont dessinés en code). Trois armées de
+**10 soldats** se font face sur un champ de bataille ; tout le calcul passe par le modèle Composite
+(`IUnite`, `Escouade`, `Combat`), la 2D ne fait que le mettre en scène. Vidéo : [`docs/captures/bataille.mp4`](docs/captures/bataille.mp4).
 
-- Écran titre animé (ciel étoilé, braises, blasons), 3 modes : **3 joueurs**, **solo contre 2 IA**, **démo 3 IA**.
-- Chaque armée est dessinée comme un arbre (Armée → groupes → soldats) avec barres de vie animées.
-- **Attaque Totale** : volée de projectiles depuis chaque soldat vivant (flèches, orbes, lames).
-- **Frappe Ciblée** : choix d'une escouade, puis d'une cible précise avec ligne de visée.
-- **Soins**, dégâts flottants, onde de choc, secousse de l'écran, K.O., guilde « ANÉANTIE », feux d'artifice de victoire.
-- Infobulle au survol : PV, ATQ, synergie +10 %, rôle dans le Composite.
+- **Attaque Totale** : toute l'armée attaque. Les **guerriers courent** jusqu'à l'ennemi et frappent
+  **à l'épée** puis reviennent à leur place ; les **archers tirent des flèches** depuis leur position ;
+  les **mages lancent des orbes**.
+- **Frappe Ciblée** : on clique sur une de ses escouades, puis sur une escouade ennemie (ligne de visée).
+- **Défense** : toute l'armée sort ses **armures** (plastron, casque, bulle bleue) : armure +10 pour
+  chaque soldat jusqu'au prochain tour. L'ordre est propagé récursivement par le Composite (`defendre()`).
+- **Soin** : les soigneurs incantent et une **aura verte** soigne toute leur escouade.
+- Dégâts et soins flottants, soldats K.O. qui tombent, secousse de l'écran, étendards qui flottent,
+  armée « ANÉANTIE », feux d'artifice de victoire. Modes : 3 joueurs, solo contre 2 IA, démo 3 IA.
 
-| Écran titre | Frappe ciblée | Victoire |
+| Champ de bataille | Frappe ciblée | Défense |
 |---|---|---|
-| ![](docs/captures/titre.png) | ![](docs/captures/frappe_ciblee.png) | ![](docs/captures/victoire.png) |
+| ![](docs/captures/champ_de_bataille.png) | ![](docs/captures/frappe_ciblee.png) | ![](docs/captures/defense.png) |
+| **Attaque totale** | **Soin** | **Victoire** |
+| ![](docs/captures/attaque_totale.png) | ![](docs/captures/soin.png) | ![](docs/captures/victoire.png) |
 
-Lancement : configuration **« Jouer en 2D (version graphique) »** dans VS Code, ou `jouer2D.bat` (Windows) / `./jouer2D.sh`.
+Lancement : configuration **« Jouer en 2D (champ de bataille) »** dans VS Code, ou `jouer2D.bat` (Windows) / `./jouer2D.sh`.
 
 ## Lancer le jeu dans VS Code
 
@@ -37,7 +42,7 @@ Lancement : configuration **« Jouer en 2D (version graphique) »** dans VS Code
    (`vscjava.vscode-java-pack`, proposée automatiquement à l'ouverture du dossier).
 2. `Fichier > Ouvrir le dossier...` → choisir le dossier `clash_of_guilds`.
 3. Attendre que VS Code importe le projet (Maven, `pom.xml`).
-4. Onglet **Exécuter et déboguer** (Ctrl+Shift+D) → choisir **« Jouer en 2D (version graphique) »**
+4. Onglet **Exécuter et déboguer** (Ctrl+Shift+D) → choisir **« Jouer en 2D (champ de bataille) »**
    ou **« Jouer en console (version du TP) »** → ▶.
    Le jeu s'ouvre dans le terminal intégré (indispensable pour taper les choix).
    - Ou ouvrir `JeuConsole.java` et cliquer sur **Run** au-dessus de `main`.
@@ -62,6 +67,8 @@ mvn package && java -jar target/composite_clash_of_guilds-1.0.jar
 | Archer | 75 | 40 | – | 70 PO | encaisse tous les dégâts |
 | Mage | 50 | 65 | – | 100 PO | canon de verre |
 | Soigneur *(bonus)* | 60 | 10 | – | 90 PO | soigne son escouade de 40 PV |
+
+**Défense** (console et 2D) : toute l'armée gagne +10 d'armure jusqu'au prochain tour du joueur.
 
 - **Attaque d'un groupe** = somme des attaques des membres vivants, **+10 %** si au moins 2 membres vivants (bonus de synergie, cumulé à chaque niveau).
 - **Dégâts reçus par un groupe** : répartis équitablement entre les membres vivants, récursivement (le reliquat va aux premiers).
@@ -144,6 +151,8 @@ classDiagram
 | `ParcoursArbre.java`, `Saisie.java` | Outils console (parcours pour menus, saisies contrôlées) |
 | `TestsClashOfGuilds.java` | Vérifications automatiques des règles |
 | `gui/JeuGraphique.java` | Point d'entrée de la version 2D (fenêtre) |
-| `gui/PanneauJeu.java` | Écrans titre / bataille / victoire, interactions, IA, rendu de l'arbre |
+| `gui/PanneauJeu.java` | Écrans titre / champ de bataille / victoire, mise en scène des actions, IA |
+| `gui/Soldat.java` | Soldat animé (course, coup d'épée, tir à l'arc, sort, armure, chute) |
+| `gui/Decor.java` | Décors (ciel du menu, champ de bataille) et outils de texte |
 | `gui/Effets.java` | Particules, projectiles, ondes de choc, textes flottants, secousse |
 | `gui/Icones.java`, `gui/Theme.java` | Icônes vectorielles (unités, blasons) et charte graphique |

@@ -17,6 +17,7 @@ public class TestsClashOfGuilds {
         testCycles();
         testSoins();
         testRecrutementBudget();
+        testDefense();
 
         System.out.printf("%n%d test(s) reussi(s), %d echec(s).%n", reussis, echoues);
         if (echoues > 0) {
@@ -149,6 +150,30 @@ public class TestsClashOfGuilds {
         verifier("Soin plafonne aux PV max", 60, s.getPointsDeVie());
         verifier("PV effectivement restaures", 20, restaures);
         verifier("On ne ressuscite pas les morts", 0, mort.getPointsDeVie());
+    }
+
+    private static void testDefense() {
+        Escouade armee = new Escouade("Armee");
+        Escouade e = new Escouade("E");
+        Archer a = new Archer("A");
+        Guerrier g = new Guerrier("G");
+        e.ajouter(a);
+        e.ajouter(g);
+        armee.ajouter(e);
+        Combat.defendre(armee); // propage recursivement
+        armee.subirDegats(60); // 30 chacun
+        verifier("Defense : archer 30 - 10 = 20", 55, a.getPointsDeVie());
+        verifier("Defense : guerrier 30 - 5 - 10 = 15", 105, g.getPointsDeVie());
+        Combat.finirDefense(armee);
+        a.subirDegats(5);
+        verifier("Fin de la defense : degats normaux", 50, a.getPointsDeVie());
+        Combat.defendre(armee);
+        a.subirDegats(3);
+        verifier("Defense : au moins 1 degat", 49, a.getPointsDeVie());
+        verifier("Grandes armees : 10 soldats chacune", 30,
+                ParcoursArbre.feuilles(GuildesPredefinies.grandeArmeeLions()).size()
+                + ParcoursArbre.feuilles(GuildesPredefinies.grandeArmeeOmbres()).size()
+                + ParcoursArbre.feuilles(GuildesPredefinies.grandeArmeeGardiens()).size());
     }
 
     private static void testRecrutementBudget() {

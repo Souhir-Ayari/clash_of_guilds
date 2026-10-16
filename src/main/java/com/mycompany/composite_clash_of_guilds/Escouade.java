@@ -178,6 +178,14 @@ public class Escouade implements IUnite {
         }
     }
 
+    /** Transmet la posture defensive a chaque membre, recursivement. */
+    @Override
+    public void defendre(int bonusArmure) {
+        for (IUnite membre : membres) {
+            membre.defendre(bonusArmure);
+        }
+    }
+
     /** Vivant des qu'au moins un membre est vivant. */
     @Override
     public boolean estVivant() {
