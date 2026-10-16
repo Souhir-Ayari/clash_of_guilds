@@ -16,6 +16,7 @@ public abstract class UniteElementaire implements IUnite {
     private final int attaque;
     private final int cout;
     private int pointsDeVie;
+    private int bonusDefense;
 
     protected UniteElementaire(String nom, int pointsDeVieMax, int attaque, int cout) {
         if (pointsDeVieMax <= 0) {
@@ -42,6 +43,10 @@ public abstract class UniteElementaire implements IUnite {
     /** Statistiques supplementaires a afficher (ex. ", ARM : 5"). */
     protected String detailsSupplementaires() {
         return "";
+    }
+
+    private String detailsDefense() {
+        return bonusDefense > 0 ? ", DEF +" + bonusDefense : "";
     }
 
     @Override
@@ -71,7 +76,21 @@ public abstract class UniteElementaire implements IUnite {
         if (!estVivant() || montant <= 0) {
             return;
         }
-        pointsDeVie = Math.max(0, pointsDeVie - calculerDegatsNets(montant));
+        int net = calculerDegatsNets(montant);
+        if (bonusDefense > 0) {
+            net = Math.max(1, net - bonusDefense);
+        }
+        pointsDeVie = Math.max(0, pointsDeVie - net);
+    }
+
+    @Override
+    public void defendre(int bonusArmure) {
+        bonusDefense = Math.max(0, bonusArmure);
+    }
+
+    /** Bonus d'armure de la posture defensive en cours (0 si aucune). */
+    public int getBonusDefense() {
+        return bonusDefense;
     }
 
     @Override
@@ -100,7 +119,7 @@ public abstract class UniteElementaire implements IUnite {
         String statut = estVivant() ? "" : "  >> TOMBE AU COMBAT";
         System.out.printf("%s%s%s %s (PV : %d/%d, ATQ : %d%s)%s%n",
                 prefix, connecteur, etiquette, nom, pointsDeVie, pointsDeVieMax,
-                getPuissanceAttaque(), detailsSupplementaires(), statut);
+                getPuissanceAttaque(), detailsSupplementaires() + detailsDefense(), statut);
     }
 
     @Override

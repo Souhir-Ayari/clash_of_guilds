@@ -32,6 +32,12 @@ public interface IUnite {
     /** Recoit des soins sans depasser les PV max (un groupe les repartit recursivement). */
     void recevoirSoins(int montant);
 
+    /**
+     * Posture defensive : chaque combattant gagne un bonus d'armure (0 = fin de la defense).
+     * Un groupe propage l'ordre recursivement a tous ses membres.
+     */
+    void defendre(int bonusArmure);
+
     boolean estVivant();
 
     /** Cout de recrutement en pieces d'or (pour un groupe : somme des couts). */

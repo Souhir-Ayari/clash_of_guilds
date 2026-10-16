@@ -20,7 +20,20 @@ public final class Combat {
         }
     }
 
+    /** Bonus d'armure accorde a chaque combattant par l'action "Se defendre". */
+    public static final int BONUS_DEFENSE = 10;
+
     private Combat() {
+    }
+
+    /** L'armee entiere leve ses boucliers jusqu'au prochain tour de son joueur. */
+    public static void defendre(IUnite armee) {
+        armee.defendre(BONUS_DEFENSE);
+    }
+
+    /** Fin de la posture defensive (appele au debut du tour suivant du joueur). */
+    public static void finirDefense(IUnite armee) {
+        armee.defendre(0);
     }
 
     /** L'attaquant frappe la cible avec toute sa puissance (synergies comprises). */

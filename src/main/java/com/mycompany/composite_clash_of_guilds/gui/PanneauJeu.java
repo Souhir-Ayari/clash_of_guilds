@@ -20,7 +20,6 @@ import javax.swing.Timer;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
-import java.awt.Composite;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -31,14 +30,10 @@ import java.awt.Graphics2D;
 import java.awt.LinearGradientPaint;
 import java.awt.Paint;
 import java.awt.RadialGradientPaint;
-import java.awt.RenderingHints;
-import java.awt.Shape;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.font.GlyphVector;
-import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
@@ -48,6 +43,7 @@ import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -58,27 +54,33 @@ import java.util.Random;
 import java.util.Set;
 
 /**
- * Version graphique 2D de Clash of Guilds (presentation Swing / Java2D).
+ * Version graphique 2D : un vrai champ de bataille ou trois armees de dix
+ * soldats s'affrontent. Les guerriers courent frapper a l'epee, les archers
+ * tirent des fleches depuis leur position, les mages lancent des orbes,
+ * la defense fait apparaitre armures et boucliers, le soin une aura verte.
  *
- * Elle reutilise SANS MODIFICATION le modele Composite du jeu console
- * (IUnite, Escouade, Guerrier, Archer, Mage, Soigneur, Combat) :
- * seule la couche de presentation change. L'arbre de chaque armee est
- * dessine recursivement via getSousUnites(), et chaque attaque passe par
- * Combat.attaquer(IUnite, IUnite), comme en console.
+ * Tout le calcul passe par le modele Composite (IUnite, Escouade, Combat) :
+ * cette classe ne fait que mettre en scene ses resultats.
  */
 @SuppressWarnings("serial")
 public final class PanneauJeu extends JPanel {
 
     static final int LARGEUR = 1280;
     static final int HAUTEUR = 720;
-
-    private static final double COL_X0 = 20, COL_L = 404, COL_ESP = 14, COL_Y = 82, COL_H = 526;
-    private static final double ENTETE_H = 110;
     private static final double BARRE_Y = 620;
+
+    /** Zones des armees : Lions a gauche, Ombres a droite, Gardiens en haut. */
+    private static final Rectangle2D[] REGIONS = {
+        new Rectangle2D.Double(80, 318, 390, 282),
+        new Rectangle2D.Double(810, 318, 390, 282),
+        new Rectangle2D.Double(410, 86, 460, 200)
+    };
+    /** Pied des etendards de chaque armee. */
+    private static final double[][] DRAPEAUX = {{50, 600}, {1230, 600}, {378, 280}};
 
     enum Ecran { TITRE, JEU, VICTOIRE }
 
-    enum Mode { ACTION, CIBLE_TOTALE, ATTAQUANT, CIBLE_FRAPPE, SOIGNEUR, ATTENTE }
+    enum Mode { ACTION, CIBLE_TOTALE, ATTAQUANT, CIBLE_FRAPPE, ATTENTE }
 
     private static final class Bouton {
         final String libelle;
@@ -98,11 +100,46 @@ public final class PanneauJeu extends JPanel {
         }
     }
 
+    /** Un bloc = une escouade dont les soldats se tiennent ensemble sur le terrain. */
+    private static final class Bloc {
+        final IUnite groupe;
+        final int guilde;
+        final Rectangle2D zone;
+        final List<Soldat> soldats = new ArrayList<>();
+
+        Bloc(IUnite groupe, int guilde, Rectangle2D zone) {
+            this.groupe = groupe;
+            this.guilde = guilde;
+            this.zone = zone;
+        }
+    }
+
     private record Tache(double moment, Runnable action) {
     }
 
+    private static final class Aura {
+        final double x;
+        final double y;
+        final double rx;
+        final double ry;
+        final Color couleur;
+        double age;
+
+        Aura(double x, double y, double rx, double ry, Color couleur) {
+            this.x = x;
+            this.y = y;
+            this.rx = rx;
+            this.ry = ry;
+            this.couleur = couleur;
+        }
+    }
+
     private static final class Braise {
-        double x, y, vy, phase, taille;
+        double x;
+        double y;
+        double vy;
+        double phase;
+        double taille;
     }
 
     private final Effets effets = new Effets();
@@ -111,15 +148,16 @@ public final class PanneauJeu extends JPanel {
     private final List<Joueur> joueurs = new ArrayList<>();
     private final boolean[] ia = new boolean[3];
     private final Set<Integer> eliminationsAnnoncees = new HashSet<>();
+    private final List<Soldat> soldats = new ArrayList<>();
+    private final Map<IUnite, Soldat> soldatDe = new HashMap<>();
+    private final List<Bloc> blocs = new ArrayList<>();
     private final Map<IUnite, Integer> guildeDe = new HashMap<>();
-    private final Map<IUnite, Rectangle2D> zones = new LinkedHashMap<>();
-    private final Map<IUnite, Point2D> centres = new HashMap<>();
-    private final Map<IUnite, Double> pvFantomes = new HashMap<>();
-    private final Map<IUnite, Double> flashs = new HashMap<>();
-    private final Rectangle2D[] colonnes = new Rectangle2D[3];
+    private final Rectangle2D[] drapeaux = new Rectangle2D[3];
+    private final Rectangle2D[] cartes = new Rectangle2D[3];
     private final List<Bouton> boutons = new ArrayList<>();
     private final List<Tache> taches = new ArrayList<>();
     private final List<String> journal = new ArrayList<>();
+    private final List<Aura> auras = new ArrayList<>();
     private final List<Braise> braises = new ArrayList<>();
     private final double[][] etoiles = new double[150][];
 
@@ -128,7 +166,6 @@ public final class PanneauJeu extends JPanel {
     private int actif;
     private int tour;
     private IUnite attaquantChoisi;
-    private Joueur vainqueur;
     private int indexVainqueur;
     private double temps;
     private double prochainFeu;
@@ -142,7 +179,8 @@ public final class PanneauJeu extends JPanel {
     private double decalX;
     private double decalY;
     private long dernierNano;
-    private BufferedImage fond;
+    private BufferedImage fondCiel;
+    private BufferedImage fondChamp;
     private final Timer boucle;
 
     public PanneauJeu() {
@@ -150,7 +188,6 @@ public final class PanneauJeu extends JPanel {
         setBackground(Color.BLACK);
         setDoubleBuffered(true);
         setFocusable(true);
-
         Random r = new Random(7);
         for (int i = 0; i < etoiles.length; i++) {
             etoiles[i] = new double[] {r.nextDouble() * LARGEUR, r.nextDouble() * 470,
@@ -161,7 +198,6 @@ public final class PanneauJeu extends JPanel {
             b.y = alea.nextDouble() * HAUTEUR;
             braises.add(b);
         }
-
         MouseAdapter souris = new MouseAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
@@ -182,15 +218,14 @@ public final class PanneauJeu extends JPanel {
         addMouseListener(souris);
         addMouseMotionListener(souris);
         raccourci("ESCAPE", this::annuler);
-        raccourci("1", () -> declencherBouton(0));
-        raccourci("2", () -> declencherBouton(1));
-        raccourci("3", () -> declencherBouton(2));
-
+        for (int k = 1; k <= 4; k++) {
+            int index = k - 1;
+            raccourci(String.valueOf(k), () -> declencherBouton(index));
+        }
         construireBoutonsTitre();
         boucle = new Timer(15, e -> tic());
     }
 
-    /** Demarre la boucle d'animation (~60 images/s). */
     public void demarrer() {
         dernierNano = 0;
         boucle.start();
@@ -216,54 +251,94 @@ public final class PanneauJeu extends JPanel {
     }
 
     // ==================================================================
-    // Etat du jeu
+    // Mise en place de la bataille
     // ==================================================================
 
     void demarrerPartie(boolean ia1, boolean ia2, boolean ia3) {
         joueurs.clear();
+        soldats.clear();
+        soldatDe.clear();
+        blocs.clear();
         guildeDe.clear();
-        pvFantomes.clear();
-        flashs.clear();
         journal.clear();
         taches.clear();
+        auras.clear();
         eliminationsAnnoncees.clear();
         ia[0] = ia1;
         ia[1] = ia2;
         ia[2] = ia3;
         String[] humains = {"Alice", "Bob", "Charlie"};
         String[] robots = {"Leonis", "Umbra", "Runa"};
-        Escouade[] armees = {GuildesPredefinies.armeeLions(), GuildesPredefinies.armeeOmbres(),
-            GuildesPredefinies.armeeGardiens()};
+        Escouade[] armees = {GuildesPredefinies.grandeArmeeLions(), GuildesPredefinies.grandeArmeeOmbres(),
+            GuildesPredefinies.grandeArmeeGardiens()};
         String[] factions = {GuildesPredefinies.LIONS, GuildesPredefinies.OMBRES, GuildesPredefinies.GARDIENS};
         for (int i = 0; i < 3; i++) {
             joueurs.add(new Joueur(ia[i] ? robots[i] : humains[i], factions[i], armees[i]));
             indexer(armees[i], i);
+            deployer(armees[i], i);
         }
         actif = 0;
         tour = 1;
         ecran = Ecran.JEU;
         construireBoutonsJeu();
-        journal.add("La bataille commence !");
+        journal.add("Les trois armees se font face !");
         debutTour();
     }
 
-    /** Parcours recursif de l'arbre Composite pour memoriser la guilde de chaque noeud. */
     private void indexer(IUnite u, int guilde) {
         guildeDe.put(u, guilde);
-        pvFantomes.put(u, (double) u.getPointsDeVie());
         for (IUnite enfant : u.getSousUnites()) {
             indexer(enfant, guilde);
         }
     }
 
+    /** Place les soldats de chaque escouade en formation dans la zone de leur armee. */
+    private void deployer(Escouade armee, int guilde) {
+        Map<IUnite, List<IUnite>> parBloc = new LinkedHashMap<>();
+        for (IUnite feuille : ParcoursArbre.feuilles(armee)) {
+            IUnite parent = ParcoursArbre.trouverParent(armee, feuille);
+            parBloc.computeIfAbsent(parent == null ? armee : parent, k -> new ArrayList<>()).add(feuille);
+        }
+        Rectangle2D reg = REGIONS[guilde];
+        int n = parBloc.size();
+        int colonnes = guilde == 2 ? n : 2;
+        int lignes = (int) Math.ceil(n / (double) colonnes);
+        double cw = reg.getWidth() / colonnes;
+        double ch = reg.getHeight() / lignes;
+        int k = 0;
+        for (Map.Entry<IUnite, List<IUnite>> e : parBloc.entrySet()) {
+            double cx = reg.getX() + (k % colonnes) * cw;
+            double cy = reg.getY() + (k / colonnes) * ch;
+            Bloc bloc = new Bloc(e.getKey(), guilde, new Rectangle2D.Double(cx + 6, cy + 4, cw - 12, ch - 8));
+            List<IUnite> membres = e.getValue();
+            int parLigne = membres.size() == 4 ? 2 : Math.min(3, membres.size());
+            for (int m = 0; m < membres.size(); m++) {
+                int ligne = m / parLigne;
+                int col = m % parLigne;
+                int dansLigne = Math.min(parLigne, membres.size() - ligne * parLigne);
+                double x = cx + cw / 2 + (col - (dansLigne - 1) / 2.0) * 52 + (ligne % 2) * 12;
+                double y = cy + 88 + ligne * 54;
+                boolean faceDroite = guilde == 0 || (guilde == 2 && x < LARGEUR / 2.0);
+                Soldat s = new Soldat(membres.get(m), guilde, bloc.groupe, x, y, faceDroite,
+                        alea.nextDouble() * 6.28);
+                bloc.soldats.add(s);
+                soldats.add(s);
+                soldatDe.put(s.unite, s);
+            }
+            blocs.add(bloc);
+            k++;
+        }
+    }
+
     private void debutTour() {
         attaquantChoisi = null;
-        mode = ia[actif] ? Mode.ATTENTE : Mode.ACTION;
         Joueur j = joueurs.get(actif);
+        Combat.finirDefense(j.getArmee());
+        mode = ia[actif] ? Mode.ATTENTE : Mode.ACTION;
         banniere("TOUR DE " + j.getNom().toUpperCase(),
                 "Guilde " + j.getFaction() + (ia[actif] ? "  -  IA" : ""), Theme.guilde(actif));
         if (ia[actif]) {
-            planifier(1.7, this::jouerIA);
+            planifier(1.6, this::jouerIA);
         }
     }
 
@@ -290,35 +365,32 @@ public final class PanneauJeu extends JPanel {
             taches.removeAll(pretes);
             pretes.forEach(t -> t.action().run());
         }
-        effets.avancer(dt);
-
-        if (alea.nextDouble() < dt * 14) {
-            braises.add(nouvelleBraise());
+        for (Soldat s : soldats) {
+            s.avancer(dt);
         }
-        for (Iterator<Braise> it = braises.iterator(); it.hasNext();) {
-            Braise b = it.next();
-            b.y -= b.vy * dt;
-            if (b.y < -10) {
+        effets.avancer(dt);
+        for (Iterator<Aura> it = auras.iterator(); it.hasNext();) {
+            Aura a = it.next();
+            a.age += dt;
+            if (a.age > 1.8) {
                 it.remove();
             }
         }
-        for (Map.Entry<IUnite, Double> e : pvFantomes.entrySet()) {
-            double reel = e.getKey().getPointsDeVie();
-            e.setValue(e.getValue() + (reel - e.getValue()) * Math.min(1, dt * 2.4));
-        }
-        for (Iterator<Map.Entry<IUnite, Double>> it = flashs.entrySet().iterator(); it.hasNext();) {
-            Map.Entry<IUnite, Double> e = it.next();
-            double v = e.getValue();
-            v = v > 0 ? Math.max(0, v - dt) : Math.min(0, v + dt);
-            if (v == 0) {
-                it.remove();
-            } else {
-                e.setValue(v);
+        if (ecran == Ecran.TITRE) {
+            if (alea.nextDouble() < dt * 14) {
+                braises.add(nouvelleBraise());
+            }
+            for (Iterator<Braise> it = braises.iterator(); it.hasNext();) {
+                Braise b = it.next();
+                b.y -= b.vy * dt;
+                if (b.y < -10) {
+                    it.remove();
+                }
             }
         }
         if (ecran == Ecran.VICTOIRE && temps >= prochainFeu) {
             feuDArtifice();
-            prochainFeu = temps + 0.22 + alea.nextDouble() * 0.4;
+            prochainFeu = temps + 0.25 + alea.nextDouble() * 0.4;
         }
         mettreAJourBoutons();
     }
@@ -334,101 +406,172 @@ public final class PanneauJeu extends JPanel {
     }
 
     // ==================================================================
-    // Actions de combat (le modele Composite fait tout le calcul)
+    // Actions de combat
     // ==================================================================
 
-    private void executerAttaque(IUnite attaquant, IUnite cible, String nature) {
-        mode = Mode.ATTENTE;
-        attaquantChoisi = null;
-        List<IUnite> tireurs = vivantes(attaquant);
-        List<IUnite> cibles = vivantes(cible);
-        Point2D centreCible = centre(cible);
-        double fin = 0;
-        for (int k = 0; k < tireurs.size(); k++) {
-            IUnite t = tireurs.get(k);
-            Point2D arrivee = cibles.isEmpty() ? centreCible : centre(cibles.get(alea.nextInt(cibles.size())));
-            double delai = k * 0.09;
-            double duree = 0.55 + alea.nextDouble() * 0.15;
-            fin = Math.max(fin, delai + duree);
-            Color c = Theme.type(t);
-            effets.tirer(centre(t), arrivee, c, style(t), delai, duree, 50 + alea.nextDouble() * 90,
-                    () -> effets.explosion(arrivee.getX(), arrivee.getY(), c, 10, 170));
+    private List<Soldat> soldatsVivants(IUnite racine) {
+        List<Soldat> r = new ArrayList<>();
+        for (IUnite f : ParcoursArbre.feuilles(racine)) {
+            Soldat s = soldatDe.get(f);
+            if (s != null && f.estVivant() && !s.mortAffiche) {
+                r.add(s);
+            }
         }
-        journal.add(nomJoueur(attaquant) + " : " + nature + " !");
-        planifier(fin + 0.02, () -> impact(attaquant, cible));
+        return r;
     }
 
-    private void impact(IUnite attaquant, IUnite cible) {
+    /**
+     * Mise en scene d'une attaque : chaque soldat vivant de l'attaquant agit
+     * selon son arme. Quand tous les coups ont porte, le modele calcule les
+     * degats (Combat.attaquer) et on revele le resultat soldat par soldat.
+     */
+    private void attaquer(IUnite attaquant, IUnite cible, String libelle) {
+        mode = Mode.ATTENTE;
+        attaquantChoisi = null;
+        List<Soldat> assaillants = soldatsVivants(attaquant);
+        List<Soldat> victimes = soldatsVivants(cible);
+        journal.add(libelle);
+        int[] restants = {assaillants.size()};
+        Runnable coupPorte = () -> {
+            restants[0]--;
+            if (restants[0] == 0) {
+                revelerAttaque(attaquant, cible, assaillants);
+            }
+        };
+        if (assaillants.isEmpty() || victimes.isEmpty()) {
+            revelerAttaque(attaquant, cible, assaillants);
+            return;
+        }
+        for (int k = 0; k < assaillants.size(); k++) {
+            Soldat s = assaillants.get(k);
+            Soldat v = victimes.get(alea.nextInt(victimes.size()));
+            if (s.estMarcheur()) {
+                planifier(k * 0.06, () -> s.charger(v.x, v.y, () -> {
+                    effets.explosion(v.x, v.y - 26, new Color(255, 240, 210), 14, 170);
+                    impactSur(v, s.x);
+                    coupPorte.run();
+                }));
+            } else {
+                Color c = Theme.type(s.unite);
+                Effets.Style style = s.unite instanceof Mage ? Effets.Style.ORBE
+                        : s.unite instanceof Soigneur ? Effets.Style.SOIN : Effets.Style.FLECHE;
+                planifier(0.15 + k * 0.08, () -> s.tirer(v.x, () -> effets.tirer(s.main(), v.centre(), c, style,
+                        0, 0.55 + alea.nextDouble() * 0.15, 40 + alea.nextDouble() * 70, () -> {
+                            effets.explosion(v.x, v.y - 26, c, 10, 150);
+                            impactSur(v, s.x);
+                            coupPorte.run();
+                        })));
+            }
+        }
+    }
+
+    private void impactSur(Soldat v, double depuisX) {
+        v.toucher(depuisX);
+        effets.secouer(2.5);
+        if (v.defense > 0.3) {
+            effets.onde(v.x, v.y - 28, new Color(150, 210, 255), 30);
+        }
+    }
+
+    private void revelerAttaque(IUnite attaquant, IUnite cible, List<Soldat> assaillants) {
         Map<IUnite, Integer> avant = new HashMap<>();
         for (IUnite f : ParcoursArbre.feuilles(cible)) {
             avant.put(f, f.getPointsDeVie());
         }
+        boolean defendue = soldatsVivants(cible).stream().anyMatch(s -> s.defense > 0.5);
 
         Combat.Resultat r = Combat.attaquer(attaquant, cible);
 
         int morts = 0;
         for (Map.Entry<IUnite, Integer> e : avant.entrySet()) {
-            IUnite f = e.getKey();
-            int perte = e.getValue() - f.getPointsDeVie();
-            if (perte <= 0) {
-                continue;
+            Soldat s = soldatDe.get(e.getKey());
+            int perte = e.getValue() - e.getKey().getPointsDeVie();
+            s.pvAffiche = e.getKey().getPointsDeVie();
+            if (perte > 0) {
+                effets.texte("-" + perte, s.x, s.y - 70, new Color(0xFF7A85), 17);
             }
-            Point2D p = centre(f);
-            effets.explosion(p.getX(), p.getY(), Theme.DEGATS, 18, 230);
-            effets.texte("-" + perte, p.getX() + 30, p.getY() - 8, new Color(0xFF7A85), 19);
-            flashs.put(f, 0.45);
-            if (!f.estVivant()) {
+            if (!e.getKey().estVivant() && !s.mortAffiche) {
+                s.mortAffiche = true;
+                s.tMort = 0;
                 morts++;
-                effets.explosion(p.getX(), p.getY(), new Color(255, 214, 140), 45, 340);
-                effets.texte("K.O.", p.getX() + 46, p.getY() - 20, Theme.OR, 18);
+                effets.explosion(s.x, s.y - 16, new Color(170, 150, 120), 22, 150);
+                effets.texte("K.O.", s.x, s.y - 88, Theme.OR, 15);
             }
         }
-        Point2D c = centre(cible);
-        effets.onde(c.getX(), c.getY(), Theme.guilde(guildeDe.get(attaquant)), 170);
-        if (cible.estComposite()) {
-            effets.texte("-" + r.pvPerdus() + " PV", c.getX(), c.getY() - 26, Theme.OR_PALE, 32);
+        Point2D c = centreDe(cible);
+        effets.texte("-" + r.pvPerdus() + " PV", c.getX(), c.getY() - 70, Theme.OR_PALE, 30);
+        if (defendue) {
+            effets.texte("ARMURE !", c.getX(), c.getY() - 104, new Color(160, 215, 255), 20);
         }
-        effets.secouer(Math.min(24, 6 + r.degatsBruts() / 14.0));
-        journal.add(String.format("%d degats sur %s%s", r.pvPerdus(), cible.getNom(),
-                morts > 0 ? " (" + morts + " K.O.)" : ""));
-        planifier(1.1, this::finAction);
+        effets.onde(c.getX(), c.getY() - 20, Theme.guilde(guildeDe.get(attaquant)), 150);
+        effets.secouer(Math.min(20, 5 + r.degatsBruts() / 18.0));
+        journal.add(r.pvPerdus() + " degats sur " + cible.getNom() + (morts > 0 ? " (" + morts + " K.O.)" : ""));
+        double retour = 0;
+        for (Soldat s : assaillants) {
+            retour = Math.max(retour, s.distanceAuPoste() / Soldat.VITESSE);
+        }
+        planifier(retour + 0.7, this::finAction);
     }
 
-    private void lancerSoin(Soigneur soigneur) {
+    private void defendre() {
         mode = Mode.ATTENTE;
-        IUnite groupe = ParcoursArbre.trouverParent(joueurs.get(actif).getArmee(), soigneur);
-        List<IUnite> allies = vivantes(groupe);
-        double fin = 0;
-        for (int k = 0; k < allies.size(); k++) {
-            double delai = k * 0.07;
-            fin = Math.max(fin, delai + 0.5);
-            effets.tirer(centre(soigneur), centre(allies.get(k)), Theme.SOIN, Effets.Style.SOIN, delai, 0.5, 35, null);
+        Joueur j = joueurs.get(actif);
+        Combat.defendre(j.getArmee());
+        List<Soldat> vivants = soldatsVivants(j.getArmee());
+        for (int k = 0; k < vivants.size(); k++) {
+            Soldat s = vivants.get(k);
+            planifier(k * 0.05, () -> {
+                effets.onde(s.x, s.y - 26, new Color(150, 210, 255), 34);
+                effets.explosion(s.x, s.y - 30, new Color(220, 235, 255), 8, 90);
+            });
         }
-        planifier(fin + 0.02, () -> impactSoin(soigneur, groupe));
+        Point2D c = centreDe(j.getArmee());
+        effets.texte("ARMURE +" + Combat.BONUS_DEFENSE, c.getX(), c.getY() - 60, new Color(160, 215, 255), 30);
+        journal.add(j.getFaction() + " leve les boucliers (armure +" + Combat.BONUS_DEFENSE + ")");
+        planifier(1.6, this::finAction);
     }
 
-    private void impactSoin(Soigneur soigneur, IUnite groupe) {
+    private void soigner() {
+        mode = Mode.ATTENTE;
+        Joueur j = joueurs.get(actif);
+        List<Soldat> soigneurs = new ArrayList<>();
+        for (Soldat s : soldatsVivants(j.getArmee())) {
+            if (s.unite instanceof Soigneur) {
+                soigneurs.add(s);
+            }
+        }
+        for (int k = 0; k < soigneurs.size(); k++) {
+            Soldat s = soigneurs.get(k);
+            planifier(k * 0.5, () -> s.incanter(() -> appliquerSoin(s)));
+        }
+        planifier(soigneurs.size() * 0.5 + 1.6, this::finAction);
+    }
+
+    private void appliquerSoin(Soldat soigneur) {
+        IUnite armee = joueurs.get(soigneur.guilde).getArmee();
+        IUnite groupe = ParcoursArbre.trouverParent(armee, soigneur.unite);
         Map<IUnite, Integer> avant = new HashMap<>();
         for (IUnite f : ParcoursArbre.feuilles(groupe)) {
             avant.put(f, f.getPointsDeVie());
         }
-        int total = soigneur.soigner(groupe);
+        int total = ((Soigneur) soigneur.unite).soigner(groupe);
+        Bloc bloc = blocDe(groupe);
+        if (bloc != null) {
+            double bas = bloc.soldats.stream().mapToDouble(s -> s.hy).max().orElse(bloc.zone.getCenterY());
+            auras.add(new Aura(bloc.zone.getCenterX(), bas - 6, bloc.zone.getWidth() / 2 + 10, 50, Theme.SOIN));
+        }
         for (Map.Entry<IUnite, Integer> e : avant.entrySet()) {
+            Soldat s = soldatDe.get(e.getKey());
             int gain = e.getKey().getPointsDeVie() - e.getValue();
+            s.pvAffiche = e.getKey().getPointsDeVie();
+            if (e.getKey().estVivant()) {
+                effets.soin(s.x, s.y - 20);
+            }
             if (gain > 0) {
-                Point2D p = centre(e.getKey());
-                effets.soin(p.getX(), p.getY());
-                effets.texte("+" + gain, p.getX() + 30, p.getY() - 8, Theme.SOIN, 19);
-                flashs.put(e.getKey(), -0.45);
+                effets.texte("+" + gain, s.x, s.y - 70, Theme.SOIN, 17);
             }
         }
-        Point2D c = centre(groupe);
-        effets.onde(c.getX(), c.getY(), Theme.SOIN, 120);
-        if (total == 0) {
-            effets.texte("Aucun blesse", c.getX(), c.getY() - 20, Theme.SOIN, 18);
-        }
-        journal.add(soigneur.getNom() + " soigne " + groupe.getNom() + " : +" + total + " PV");
-        planifier(1.0, this::finAction);
+        journal.add(soigneur.unite.getNom() + " soigne " + groupe.getNom() + " : +" + total + " PV");
     }
 
     private void finAction() {
@@ -436,14 +579,12 @@ public final class PanneauJeu extends JPanel {
         for (int i = 0; i < joueurs.size(); i++) {
             Joueur j = joueurs.get(i);
             if (j.estElimine() && eliminationsAnnoncees.add(i)) {
-                banniere("GUILDE ANEANTIE", j.getFaction() + " de " + j.getNom() + " est tombee", Theme.DEGATS);
+                banniere("ARMEE ANEANTIE", j.getFaction() + " de " + j.getNom() + " est tombee", Theme.DEGATS);
                 journal.add(j.getFaction() + " est aneantie !");
-                Rectangle2D col = colonnes[i];
-                if (col != null) {
-                    effets.explosion(col.getCenterX(), col.getCenterY(), Theme.DEGATS, 120, 520);
-                    effets.onde(col.getCenterX(), col.getCenterY(), Theme.guilde(i), 320);
-                }
-                effets.secouer(26);
+                Rectangle2D reg = REGIONS[i];
+                effets.explosion(reg.getCenterX(), reg.getCenterY(), Theme.DEGATS, 120, 480);
+                effets.onde(reg.getCenterX(), reg.getCenterY(), Theme.guilde(i), 300);
+                effets.secouer(24);
                 attente = 2.0;
             }
         }
@@ -470,29 +611,43 @@ public final class PanneauJeu extends JPanel {
     }
 
     private void victoire(int index) {
-        vainqueur = joueurs.get(index);
         indexVainqueur = index;
         ecran = Ecran.VICTOIRE;
         banniereDebut = -10;
         prochainFeu = temps;
+        for (Soldat s : soldats) {
+            s.celebre = s.guilde == index && !s.mortAffiche;
+        }
         construireBoutonsVictoire();
     }
 
-    /** IA simple : soigne si son escouade souffre, achève une cible fragile, sinon attaque totale. */
+    /** IA : soigne ses blesses, se defend si elle faiblit, sinon attaque la guilde la plus faible. */
     private void jouerIA() {
         Joueur moi = joueurs.get(actif);
-        for (Soigneur s : soigneursVivants(moi.getArmee())) {
-            IUnite groupe = ParcoursArbre.trouverParent(moi.getArmee(), s);
-            int pv = 0;
-            int max = 0;
-            for (IUnite f : vivantes(groupe)) {
-                pv += f.getPointsDeVie();
-                max += f.getPointsDeVieMax();
+        Escouade armee = moi.getArmee();
+        boolean soigneur = soldatsVivants(armee).stream().anyMatch(s -> s.unite instanceof Soigneur);
+        if (soigneur && alea.nextDouble() < 0.7) {
+            for (Bloc b : blocs) {
+                if (b.guilde != actif || !b.groupe.estVivant()) {
+                    continue;
+                }
+                boolean aSoigneur = b.soldats.stream().anyMatch(s -> s.unite instanceof Soigneur && s.unite.estVivant());
+                int pv = 0;
+                int max = 0;
+                for (Soldat s : soldatsVivants(b.groupe)) {
+                    pv += s.unite.getPointsDeVie();
+                    max += s.unite.getPointsDeVieMax();
+                }
+                if (aSoigneur && max > 0 && pv < 0.65 * max) {
+                    soigner();
+                    return;
+                }
             }
-            if (max > 0 && pv < 0.6 * max) {
-                lancerSoin(s);
-                return;
-            }
+        }
+        double ratio = armee.getPointsDeVie() / (double) armee.getPointsDeVieMax();
+        if (ratio < 0.5 && alea.nextDouble() < 0.3) {
+            defendre();
+            return;
         }
         Joueur proie = null;
         for (Joueur j : joueurs) {
@@ -504,34 +659,30 @@ public final class PanneauJeu extends JPanel {
         if (proie == null) {
             return;
         }
-        IUnite meilleur = null;
-        for (ParcoursArbre.Noeud n : ParcoursArbre.descendants(moi.getArmee())) {
-            IUnite u = n.unite();
-            if (u.estVivant() && (meilleur == null || u.getPuissanceAttaque() > meilleur.getPuissanceAttaque())) {
-                meilleur = u;
-            }
-        }
-        IUnite victime = null;
-        if (meilleur != null) {
-            for (Joueur j : joueurs) {
-                if (j == moi || j.estElimine()) {
+        if (alea.nextDouble() < 0.4) {
+            Bloc meilleur = null;
+            Bloc faible = null;
+            int indexProie = joueurs.indexOf(proie);
+            for (Bloc b : blocs) {
+                if (!b.groupe.estVivant()) {
                     continue;
                 }
-                for (IUnite f : vivantes(j.getArmee())) {
-                    int net = f instanceof Guerrier ? meilleur.getPuissanceAttaque() - Guerrier.ARMURE
-                            : meilleur.getPuissanceAttaque();
-                    if (f.getPointsDeVie() <= net && (victime == null
-                            || f.getPuissanceAttaque() > victime.getPuissanceAttaque())) {
-                        victime = f;
-                    }
+                if (b.guilde == actif && (meilleur == null
+                        || b.groupe.getPuissanceAttaque() > meilleur.groupe.getPuissanceAttaque())) {
+                    meilleur = b;
+                }
+                if (b.guilde == indexProie && (faible == null
+                        || b.groupe.getPointsDeVie() < faible.groupe.getPointsDeVie())) {
+                    faible = b;
                 }
             }
+            if (meilleur != null && faible != null) {
+                attaquer(meilleur.groupe, faible.groupe, moi.getNom() + " : " + meilleur.groupe.getNom()
+                        + " charge " + faible.groupe.getNom());
+                return;
+            }
         }
-        if (victime != null && alea.nextDouble() < 0.7) {
-            executerAttaque(meilleur, victime, "frappe ciblee sur " + victime.getNom());
-        } else {
-            executerAttaque(moi.getArmee(), proie.getArmee(), "attaque totale sur " + proie.getFaction());
-        }
+        attaquer(armee, proie.getArmee(), moi.getNom() + " : attaque totale sur " + proie.getFaction());
     }
 
     // ==================================================================
@@ -545,9 +696,7 @@ public final class PanneauJeu extends JPanel {
         for (Bouton b : boutons) {
             main |= b.actif && b.zone.contains(sourisX, sourisY);
         }
-        IUnite u = noeudSous(sourisX, sourisY);
-        main |= u != null && estSelectionnable(u);
-        main |= mode == Mode.CIBLE_TOTALE && colonneSous(sourisX, sourisY) >= 0;
+        main |= selectionSous(sourisX, sourisY) != null;
         setCursor(Cursor.getPredefinedCursor(main ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
     }
 
@@ -570,38 +719,52 @@ public final class PanneauJeu extends JPanel {
         if (ecran != Ecran.JEU || ia[actif]) {
             return;
         }
+        IUnite choix = selectionSous(x, y);
+        if (choix == null) {
+            return;
+        }
         Joueur moi = joueurs.get(actif);
         switch (mode) {
-            case CIBLE_TOTALE -> {
-                int i = colonneSous(x, y);
-                if (i >= 0) {
-                    Joueur cible = joueurs.get(i);
-                    executerAttaque(moi.getArmee(), cible.getArmee(), "attaque totale sur " + cible.getFaction());
-                }
-            }
+            case CIBLE_TOTALE -> attaquer(moi.getArmee(), choix,
+                    moi.getNom() + " : attaque totale sur " + joueurs.get(guildeDe.get(choix)).getFaction());
             case ATTAQUANT -> {
-                IUnite u = noeudSous(x, y);
-                if (u != null && estSelectionnable(u)) {
-                    attaquantChoisi = u;
-                    mode = Mode.CIBLE_FRAPPE;
-                }
+                attaquantChoisi = choix;
+                mode = Mode.CIBLE_FRAPPE;
             }
-            case CIBLE_FRAPPE -> {
-                IUnite u = noeudSous(x, y);
-                if (u != null && estSelectionnable(u)) {
-                    executerAttaque(attaquantChoisi, u, attaquantChoisi.getNom() + " frappe " + u.getNom());
-                }
-            }
-            case SOIGNEUR -> {
-                IUnite u = noeudSous(x, y);
-                if (u instanceof Soigneur s && estSelectionnable(u)) {
-                    lancerSoin(s);
-                }
-            }
+            case CIBLE_FRAPPE -> attaquer(attaquantChoisi, choix,
+                    moi.getNom() + " : " + attaquantChoisi.getNom() + " charge " + choix.getNom());
             default -> {
-                // rien a faire
+                // rien
             }
         }
+    }
+
+    /** Ce que designe la souris dans le mode courant : une escouade ou une armee entiere. */
+    private IUnite selectionSous(double x, double y) {
+        if (ecran != Ecran.JEU || ia[actif] || mode == Mode.ATTENTE || mode == Mode.ACTION) {
+            return null;
+        }
+        if (mode == Mode.CIBLE_TOTALE || mode == Mode.CIBLE_FRAPPE) {
+            for (int i = 0; i < 3; i++) {
+                if (i == actif || joueurs.get(i).estElimine()) {
+                    continue;
+                }
+                boolean surArmee = (drapeaux[i] != null && drapeaux[i].contains(x, y))
+                        || (cartes[i] != null && cartes[i].contains(x, y));
+                if (surArmee || (mode == Mode.CIBLE_TOTALE && REGIONS[i].contains(x, y))) {
+                    return joueurs.get(i).getArmee();
+                }
+            }
+        }
+        if (mode == Mode.ATTAQUANT || mode == Mode.CIBLE_FRAPPE) {
+            for (Bloc b : blocs) {
+                boolean allie = b.guilde == actif;
+                if (b.zone.contains(x, y) && b.groupe.estVivant() && (mode == Mode.ATTAQUANT) == allie) {
+                    return b.groupe;
+                }
+            }
+        }
+        return null;
     }
 
     private void annuler() {
@@ -620,38 +783,6 @@ public final class PanneauJeu extends JPanel {
     private void basculer(Mode m) {
         attaquantChoisi = null;
         mode = mode == m ? Mode.ACTION : m;
-    }
-
-    private boolean estSelectionnable(IUnite u) {
-        if (ecran != Ecran.JEU || ia[actif] || !u.estVivant() || !guildeDe.containsKey(u)) {
-            return false;
-        }
-        boolean allie = guildeDe.get(u) == actif;
-        boolean racine = u == joueurs.get(guildeDe.get(u)).getArmee();
-        return switch (mode) {
-            case ATTAQUANT -> allie && !racine;
-            case CIBLE_FRAPPE -> !allie;
-            case SOIGNEUR -> allie && u instanceof Soigneur;
-            default -> false;
-        };
-    }
-
-    private IUnite noeudSous(double x, double y) {
-        for (Map.Entry<IUnite, Rectangle2D> e : zones.entrySet()) {
-            if (e.getValue().contains(x, y)) {
-                return e.getKey();
-            }
-        }
-        return null;
-    }
-
-    private int colonneSous(double x, double y) {
-        for (int i = 0; i < 3; i++) {
-            if (colonnes[i] != null && colonnes[i].contains(x, y) && i != actif && !joueurs.get(i).estElimine()) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     // ==================================================================
@@ -675,12 +806,15 @@ public final class PanneauJeu extends JPanel {
     private void construireBoutonsJeu() {
         boutons.clear();
         double y = BARRE_Y + 14;
-        boutons.add(new Bouton("ATTAQUE TOTALE", "Toute l'armee  [1]", Icones.EPEES,
-                new Rectangle2D.Double(430, y, 178, 62), () -> basculer(Mode.CIBLE_TOTALE)));
-        boutons.add(new Bouton("FRAPPE CIBLEE", "Une escouade d'elite  [2]", Icones.CIBLE,
-                new Rectangle2D.Double(618, y, 178, 62), () -> basculer(Mode.ATTAQUANT)));
-        boutons.add(new Bouton("SOIGNER", "Un soigneur  [3]", Icones.PLUS,
-                new Rectangle2D.Double(806, y, 178, 62), () -> basculer(Mode.SOIGNEUR)));
+        double l = 144;
+        boutons.add(new Bouton("ATTAQUE TOTALE", "Toute l'armee [1]", Icones.EPEES,
+                new Rectangle2D.Double(410, y, l, 62), () -> basculer(Mode.CIBLE_TOTALE)));
+        boutons.add(new Bouton("FRAPPE CIBLEE", "Une escouade [2]", Icones.CIBLE,
+                new Rectangle2D.Double(562, y, l, 62), () -> basculer(Mode.ATTAQUANT)));
+        boutons.add(new Bouton("DEFENSE", "Armure +" + Combat.BONUS_DEFENSE + " [3]", Icones.BOUCLIER,
+                new Rectangle2D.Double(714, y, l, 62), this::defendre));
+        boutons.add(new Bouton("SOIN", "Les soigneurs [4]", Icones.PLUS,
+                new Rectangle2D.Double(866, y, l, 62), this::soigner));
     }
 
     private void construireBoutonsVictoire() {
@@ -703,68 +837,46 @@ public final class PanneauJeu extends JPanel {
     }
 
     private void mettreAJourBoutons() {
-        if (ecran != Ecran.JEU || boutons.size() < 3) {
+        if (ecran != Ecran.JEU || boutons.size() < 4) {
             return;
         }
         boolean possible = !ia[actif] && mode != Mode.ATTENTE;
+        IUnite armee = joueurs.get(actif).getArmee();
         boutons.get(0).actif = possible;
         boutons.get(1).actif = possible;
-        boutons.get(2).actif = possible && !soigneursVivants(joueurs.get(actif).getArmee()).isEmpty();
+        boutons.get(2).actif = possible;
+        boutons.get(3).actif = possible && soldatsVivants(armee).stream().anyMatch(s -> s.unite instanceof Soigneur);
         boutons.get(0).selectionne = mode == Mode.CIBLE_TOTALE;
         boutons.get(1).selectionne = mode == Mode.ATTAQUANT || mode == Mode.CIBLE_FRAPPE;
-        boutons.get(2).selectionne = mode == Mode.SOIGNEUR;
     }
 
     // ==================================================================
     // Outils
     // ==================================================================
 
-    private static List<IUnite> vivantes(IUnite racine) {
-        List<IUnite> r = new ArrayList<>();
-        for (IUnite f : ParcoursArbre.feuilles(racine)) {
-            if (f.estVivant()) {
-                r.add(f);
+    private Bloc blocDe(IUnite groupe) {
+        for (Bloc b : blocs) {
+            if (b.groupe == groupe) {
+                return b;
             }
         }
-        return r;
+        return null;
     }
 
-    private static List<Soigneur> soigneursVivants(IUnite armee) {
-        List<Soigneur> r = new ArrayList<>();
-        for (IUnite f : ParcoursArbre.feuilles(armee)) {
-            if (f instanceof Soigneur s && s.estVivant()) {
-                r.add(s);
+    /** Centre visuel d'une unite, d'une escouade ou d'une armee (moyenne de ses soldats). */
+    private Point2D centreDe(IUnite u) {
+        double x = 0;
+        double y = 0;
+        int n = 0;
+        for (IUnite f : ParcoursArbre.feuilles(u)) {
+            Soldat s = soldatDe.get(f);
+            if (s != null) {
+                x += s.hx;
+                y += s.hy;
+                n++;
             }
         }
-        return r;
-    }
-
-    private static Effets.Style style(IUnite u) {
-        if (u instanceof Mage) {
-            return Effets.Style.ORBE;
-        }
-        if (u instanceof Guerrier) {
-            return Effets.Style.LAME;
-        }
-        if (u instanceof Soigneur) {
-            return Effets.Style.SOIN;
-        }
-        return Effets.Style.FLECHE;
-    }
-
-    private String nomJoueur(IUnite u) {
-        Integer i = guildeDe.get(u);
-        return i == null ? "?" : joueurs.get(i).getNom();
-    }
-
-    private Point2D centre(IUnite u) {
-        Point2D p = centres.get(u);
-        if (p != null) {
-            return p;
-        }
-        Rectangle2D z = zones.get(u);
-        return z != null ? new Point2D.Double(z.getCenterX(), z.getCenterY())
-                : new Point2D.Double(LARGEUR / 2.0, HAUTEUR / 2.0);
+        return n == 0 ? new Point2D.Double(LARGEUR / 2.0, HAUTEUR / 2.0) : new Point2D.Double(x / n, y / n);
     }
 
     private void feuDArtifice() {
@@ -779,19 +891,30 @@ public final class PanneauJeu extends JPanel {
     static BufferedImage icone() {
         BufferedImage img = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
-        qualite(g);
+        Decor.qualite(g);
         Icones.blason(g, 0, 32, 30, 26, false);
         g.dispose();
         return img;
     }
 
-    private static void qualite(Graphics2D g) {
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+    /** Zones cliquables des escouades d'une guilde (utilise par l'outil de captures). */
+    List<Rectangle2D> zonesEscouades(int guilde) {
+        List<Rectangle2D> r = new ArrayList<>();
+        for (Bloc b : blocs) {
+            if (b.guilde == guilde) {
+                r.add(b.zone);
+            }
+        }
+        return r;
+    }
+
+    /** Vrai quand un joueur humain peut choisir une action (utilise par l'outil de captures). */
+    boolean attendUneAction() {
+        return ecran == Ecran.JEU && mode == Mode.ACTION && !ia[actif] && temps - banniereDebut > 1.8;
+    }
+
+    boolean estEnVictoire() {
+        return ecran == Ecran.VICTOIRE;
     }
 
     // ==================================================================
@@ -814,89 +937,26 @@ public final class PanneauJeu extends JPanel {
         g.dispose();
     }
 
-    /** Dessine une image complete du jeu dans le repere logique 1280 x 720. */
     void rendre(Graphics2D g) {
-        qualite(g);
-        if (fond == null) {
-            fond = creerFond();
-        }
-        g.drawImage(fond, 0, 0, null);
-        dessinerEtoiles(g);
-        dessinerBraises(g);
+        Decor.qualite(g);
         if (ecran == Ecran.TITRE) {
+            if (fondCiel == null) {
+                fondCiel = Decor.ciel();
+            }
+            g.drawImage(fondCiel, 0, 0, null);
+            dessinerEtoiles(g);
+            dessinerBraises(g);
             dessinerTitre(g);
             dessinerBoutons(g);
-            effets.dessiner(g);
             return;
         }
-        dessinerJeu(g);
+        if (fondChamp == null) {
+            fondChamp = Decor.champ(REGIONS);
+        }
+        dessinerBataille(g);
         if (ecran == Ecran.VICTOIRE) {
             dessinerVictoire(g);
         }
-    }
-
-    private BufferedImage creerFond() {
-        BufferedImage img = new BufferedImage(LARGEUR, HAUTEUR, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = img.createGraphics();
-        qualite(g);
-        g.setPaint(new LinearGradientPaint(0, 0, 0, HAUTEUR, new float[] {0f, 0.55f, 0.8f, 1f},
-                new Color[] {new Color(0x060A1C), new Color(0x1A1238), new Color(0x2B1530), new Color(0x0E0812)}));
-        g.fillRect(0, 0, LARGEUR, HAUTEUR);
-        g.setPaint(new RadialGradientPaint(1040, 130, 300, new float[] {0f, 1f},
-                new Color[] {new Color(255, 214, 150, 70), new Color(255, 214, 150, 0)}));
-        g.fillRect(0, 0, LARGEUR, HAUTEUR);
-        g.setPaint(new RadialGradientPaint(1030, 120, 44, new float[] {0f, 1f},
-                new Color[] {new Color(255, 246, 220), new Color(240, 214, 170)}));
-        g.fill(new Ellipse2D.Double(990, 80, 88, 88));
-        g.setColor(new Color(214, 186, 140, 90));
-        g.fill(new Ellipse2D.Double(1010, 100, 16, 16));
-        g.fill(new Ellipse2D.Double(1045, 132, 11, 11));
-
-        g.setColor(new Color(0x1F1638));
-        g.fill(montagnes(470, 60, 0.006, 35, 0.017, 1));
-        g.setColor(new Color(0x140E26));
-        g.fill(montagnes(545, 45, 0.009, 25, 0.03, 2));
-        g.setColor(new Color(0x0E0A1A));
-        chateau(g, 150, 560);
-        chateau(g, 1090, 548);
-        g.fill(montagnes(610, 25, 0.012, 12, 0.04, 3));
-
-        g.setPaint(new GradientPaint(0, 520, new Color(140, 100, 200, 0), 0, HAUTEUR, new Color(140, 100, 200, 40)));
-        g.fillRect(0, 520, LARGEUR, 200);
-        g.setPaint(new RadialGradientPaint(LARGEUR / 2f, HAUTEUR / 2f, 820, new float[] {0.5f, 1f},
-                new Color[] {new Color(0, 0, 0, 0), new Color(0, 0, 0, 190)}));
-        g.fillRect(0, 0, LARGEUR, HAUTEUR);
-        g.dispose();
-        return img;
-    }
-
-    private static Shape montagnes(double base, double a1, double f1, double a2, double f2, double phase) {
-        Path2D p = new Path2D.Double();
-        p.moveTo(0, HAUTEUR);
-        for (int x = 0; x <= LARGEUR; x += 8) {
-            double y = base + a1 * Math.sin(x * f1 + phase) + a2 * Math.sin(x * f2 + phase * 2)
-                    + 8 * Math.sin(x * 0.07 + phase);
-            p.lineTo(x, y);
-        }
-        p.lineTo(LARGEUR, HAUTEUR);
-        p.closePath();
-        return p;
-    }
-
-    private static void chateau(Graphics2D g, double x, double y) {
-        g.fill(new Rectangle2D.Double(x - 50, y - 40, 100, 60));
-        g.fill(new Rectangle2D.Double(x - 70, y - 75, 32, 95));
-        g.fill(new Rectangle2D.Double(x + 38, y - 75, 32, 95));
-        g.fill(new Rectangle2D.Double(x - 14, y - 105, 28, 70));
-        for (double cx : new double[] {x - 70, x - 54, x + 38, x + 54}) {
-            g.fill(new Rectangle2D.Double(cx, y - 85, 10, 12));
-        }
-        Path2D toit = new Path2D.Double();
-        toit.moveTo(x - 18, y - 105);
-        toit.lineTo(x, y - 140);
-        toit.lineTo(x + 18, y - 105);
-        toit.closePath();
-        g.fill(toit);
     }
 
     private void dessinerEtoiles(Graphics2D g) {
@@ -918,402 +978,360 @@ public final class PanneauJeu extends JPanel {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Ecran titre
-    // ------------------------------------------------------------------
-
     private void dessinerTitre(Graphics2D g) {
         double flotte = Math.sin(temps * 1.4) * 4;
-        texteLogo(g, "CLASH", LARGEUR / 2.0, 168 + flotte, 112);
-        texteLogo(g, "OF  GUILDS", LARGEUR / 2.0, 238 + flotte, 54);
-        ornement(g, LARGEUR / 2.0, 268, 300);
-        texteCentre(g, "Wargame tactique a trois guildes  -  Patron de conception Composite",
+        Decor.texteLogo(g, "CLASH", LARGEUR / 2.0, 168 + flotte, 112);
+        Decor.texteLogo(g, "OF  GUILDS", LARGEUR / 2.0, 238 + flotte, 54);
+        Decor.ornement(g, LARGEUR / 2.0, 268, 300);
+        Decor.texteCentre(g, "Trois armees, un champ de bataille  -  Patron de conception Composite",
                 Theme.texte(Font.PLAIN, 16), Theme.TEXTE_DOUX, LARGEUR / 2.0, 298);
         for (int i = 0; i < 3; i++) {
             double x = 520 + i * 120;
             double y = 352 + Math.sin(temps * 1.8 + i * 1.3) * 5;
             Icones.blason(g, i, x, y, 30, false);
         }
-        texteCentre(g, "IUnite  -  Escouade (Composite)  -  Guerrier, Archer, Mage, Soigneur (Feuilles)",
+        Decor.texteCentre(g, "IUnite  -  Escouade (Composite)  -  Guerrier, Archer, Mage, Soigneur (Feuilles)",
                 Theme.texte(Font.PLAIN, 12), Theme.alpha(Theme.TEXTE_DOUX, 0.8), LARGEUR / 2.0, 700);
     }
 
-    private void texteLogo(Graphics2D g, String texte, double cx, double base, float taille) {
-        Font f = Theme.titre(taille);
-        GlyphVector gv = f.createGlyphVector(g.getFontRenderContext(), texte);
-        Rectangle2D b = gv.getVisualBounds();
-        Shape s = AffineTransform.getTranslateInstance(cx - b.getWidth() / 2 - b.getX(), base)
-                .createTransformedShape(gv.getOutline());
-        for (int k = 6; k >= 1; k--) {
-            g.setStroke(new BasicStroke(k * 4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g.setColor(new Color(255, 170, 60, 10));
-            g.draw(s);
-        }
-        g.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(new Color(40, 20, 8));
-        g.draw(s);
-        g.setPaint(new LinearGradientPaint((float) cx, (float) (base - b.getHeight()), (float) cx, (float) base,
-                new float[] {0f, 0.5f, 0.52f, 1f},
-                new Color[] {Theme.OR_PALE, Theme.OR, new Color(0xE0A53A), Theme.OR_FONCE}));
-        g.fill(s);
-    }
-
-    private void ornement(Graphics2D g, double cx, double y, double demi) {
-        g.setPaint(new LinearGradientPaint((float) (cx - demi), (float) y, (float) (cx + demi), (float) y,
-                new float[] {0f, 0.5f, 1f},
-                new Color[] {Theme.alpha(Theme.OR, 0), Theme.OR, Theme.alpha(Theme.OR, 0)}));
-        g.setStroke(new BasicStroke(1.5f));
-        g.draw(new Line2D.Double(cx - demi, y, cx + demi, y));
-        Path2D d = new Path2D.Double();
-        d.moveTo(cx, y - 6);
-        d.lineTo(cx + 6, y);
-        d.lineTo(cx, y + 6);
-        d.lineTo(cx - 6, y);
-        d.closePath();
-        g.setColor(Theme.OR);
-        g.fill(d);
-    }
-
     // ------------------------------------------------------------------
-    // Ecran de bataille
+    // Champ de bataille
     // ------------------------------------------------------------------
 
-    private void dessinerJeu(Graphics2D g0) {
+    private void dessinerBataille(Graphics2D g0) {
         Graphics2D g = (Graphics2D) g0.create();
         double[] d = effets.decalage();
         g.translate(d[0], d[1]);
-        zones.clear();
-        centres.clear();
-        dessinerBarreHaut(g);
+        g.drawImage(fondChamp, 0, 0, null);
         for (int i = 0; i < joueurs.size(); i++) {
-            dessinerGuilde(g, i);
+            dessinerEtendard(g, i);
         }
-        dessinerBarreBas(g);
-        if (ecran == Ecran.JEU) {
-            dessinerBoutons(g);
+        for (Aura a : auras) {
+            dessinerAura(g, a);
+        }
+        dessinerSelections(g);
+        List<Soldat> ordre = new ArrayList<>(soldats);
+        ordre.sort(Comparator.comparingDouble((Soldat s) -> s.mortAffiche ? -1 : 0).thenComparingDouble(s -> s.y));
+        for (Soldat s : ordre) {
+            s.dessiner(g, temps, Theme.guilde(s.guilde));
+        }
+        for (Bloc b : blocs) {
+            dessinerEtiquette(g, b);
+        }
+        for (Soldat s : soldats) {
+            if (!s.mortAffiche && s.etat == Soldat.Etat.REPOS) {
+                petiteBarre(g, s);
+            }
         }
         dessinerVisee(g);
         if (ecran == Ecran.JEU) {
             effets.dessiner(g);
         }
         g.dispose();
+        dessinerHaut(g0);
+        dessinerBarreBas(g0);
         if (ecran == Ecran.JEU) {
+            dessinerBoutons(g0);
             dessinerBanniere(g0);
             dessinerInfobulle(g0);
         }
     }
 
-    private void dessinerBarreHaut(Graphics2D g) {
-        Font logo = Theme.titre(22);
-        g.setFont(logo);
-        g.setPaint(new GradientPaint(0, 30, Theme.OR_PALE, 0, 52, Theme.OR));
-        g.drawString("CLASH OF GUILDS", 28, 50);
-        texteCentre(g, "TOUR " + tour, Theme.titre(24), Theme.TEXTE, LARGEUR / 2.0, 52);
-        Font f = Theme.texte(Font.PLAIN, 12);
-        String aide = "Clic droit / Echap : annuler   -   Survolez une unite pour ses details";
-        g.setFont(f);
-        g.setColor(Theme.TEXTE_DOUX);
-        g.drawString(aide, (float) (LARGEUR - 28 - g.getFontMetrics().stringWidth(aide)), 48f);
-        g.setPaint(new LinearGradientPaint(20, 70, LARGEUR - 20, 70, new float[] {0f, 0.5f, 1f},
-                new Color[] {Theme.alpha(Theme.OR, 0), Theme.alpha(Theme.OR, 0.6), Theme.alpha(Theme.OR, 0)}));
+    private void dessinerEtendard(Graphics2D g, int i) {
+        double fx = DRAPEAUX[i][0];
+        double fy = DRAPEAUX[i][1];
+        boolean versDroite = i != 1;
+        double dir = versDroite ? 1 : -1;
+        boolean elimine = joueurs.get(i).estElimine();
+        Color cg = elimine ? Theme.MORT : Theme.guilde(i);
+        double haut = fy - 120;
+        g.setColor(new Color(0, 0, 0, 80));
+        g.fill(new Ellipse2D.Double(fx - 10, fy - 3, 20, 6));
+        g.setStroke(new BasicStroke(3.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(110, 78, 46));
+        g.draw(new Line2D.Double(fx, fy, fx, haut));
+        g.setColor(Theme.OR);
+        g.fill(new Ellipse2D.Double(fx - 4, haut - 7, 8, 8));
+        double longueur = 64;
+        double hauteur = 42;
+        Path2D toile = new Path2D.Double();
+        int n = 14;
+        for (int k = 0; k <= n; k++) {
+            double u = k / (double) n;
+            double vague = elimine ? u * 14 : Math.sin(temps * 4 - u * 5) * 4.5 * u;
+            double px = fx + dir * u * longueur;
+            if (k == 0) {
+                toile.moveTo(px, haut + vague);
+            } else {
+                toile.lineTo(px, haut + vague);
+            }
+        }
+        for (int k = n; k >= 0; k--) {
+            double u = k / (double) n;
+            double vague = elimine ? u * 14 : Math.sin(temps * 4 - u * 5 + 0.6) * 4.5 * u;
+            double bas = hauteur - (k == n ? 8 : 0);
+            toile.lineTo(fx + dir * u * longueur, haut + bas + vague);
+        }
+        toile.closePath();
+        g.setPaint(new GradientPaint((float) fx, (float) haut, Theme.melange(cg, Color.WHITE, 0.15),
+                (float) (fx + dir * longueur), (float) (haut + hauteur), Theme.melange(cg, Color.BLACK, 0.45)));
+        g.fill(toile);
         g.setStroke(new BasicStroke(1.2f));
-        g.draw(new Line2D.Double(20, 68, LARGEUR - 20, 68));
-    }
-
-    private void dessinerGuilde(Graphics2D g, int i) {
-        Joueur j = joueurs.get(i);
-        Escouade armee = j.getArmee();
-        Color cg = Theme.guilde(i);
-        double x = COL_X0 + i * (COL_L + COL_ESP);
-        double y = COL_Y;
-        double w = COL_L;
-        double h = COL_H;
-        colonnes[i] = new Rectangle2D.Double(x, y, w, h);
-        boolean elimine = j.estElimine();
-        boolean estActif = i == actif && ecran == Ecran.JEU;
-        boolean ciblable = mode == Mode.CIBLE_TOTALE && i != actif && !elimine && !ia[actif];
-        boolean survol = ciblable && colonnes[i].contains(sourisX, sourisY);
-        double pulse = 0.5 + 0.5 * Math.sin(temps * 4);
-        RoundRectangle2D carte = new RoundRectangle2D.Double(x, y, w, h, 24, 24);
-
-        if (estActif || survol || ciblable) {
-            Color halo = survol ? Theme.DEGATS : ciblable ? Theme.melange(cg, Theme.DEGATS, 0.5) : cg;
-            double force = survol ? 1 : ciblable ? 0.4 + 0.4 * pulse : 0.55 + 0.35 * pulse;
-            for (int k = 7; k >= 1; k--) {
-                g.setStroke(new BasicStroke(k * 3f));
-                g.setColor(Theme.alpha(halo, 0.045 * force * (8 - k) / 2));
-                g.draw(carte);
-            }
-        }
-        g.setPaint(new GradientPaint(0, (float) y, Theme.CARTE_HAUT, 0, (float) (y + h), Theme.CARTE_BAS));
-        g.fill(carte);
-        Shape ancienClip = g.getClip();
-        g.clip(carte);
-        g.setPaint(new GradientPaint(0, (float) y, Theme.alpha(cg, elimine ? 0.08 : 0.32),
-                0, (float) (y + ENTETE_H), Theme.alpha(cg, 0)));
-        g.fill(new Rectangle2D.Double(x, y, w, ENTETE_H));
-        g.setClip(ancienClip);
-        g.setStroke(new BasicStroke(survol ? 2.6f : 1.8f));
-        g.setColor(Theme.alpha(elimine ? Theme.MORT : survol ? Theme.DEGATS : cg, estActif || survol ? 0.95 : 0.55));
-        g.draw(carte);
-
-        Composite ancien = g.getComposite();
-        if (elimine) {
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.45f));
-        }
-
-        Icones.blason(g, i, x + 48, y + 52, 30, elimine);
-        centres.put(armee, new Point2D.Double(x + w / 2, y + 60));
-        zones.put(armee, new Rectangle2D.Double(x, y, w, ENTETE_H));
-        g.setFont(Theme.titre(20));
-        g.setColor(Theme.TEXTE);
-        g.drawString(j.getFaction().toUpperCase(), (float) (x + 92), (float) (y + 36));
-        g.setFont(Theme.texte(Font.PLAIN, 12.5f));
-        g.setColor(Theme.TEXTE_DOUX);
-        g.drawString("Commandant : " + j.getNom() + (ia[i] ? "  (IA)" : ""), (float) (x + 92), (float) (y + 55));
-        barreVie(g, armee, x + 92, y + 64, w - 92 - 18, 15, true);
-        g.setFont(Theme.texte(Font.BOLD, 12.5f));
-        g.setColor(Theme.OR);
-        Icones.bouton(g, Icones.EPEE, x + 99, y + 94, 6.5, Theme.OR);
-        g.drawString("ATQ " + armee.getPuissanceAttaque(), (float) (x + 110), (float) (y + 99));
-        g.setFont(Theme.texte(Font.PLAIN, 12f));
-        g.setColor(Theme.TEXTE_DOUX);
-        String valeur = "Valeur " + armee.getCout() + " PO";
-        g.drawString(valeur, (float) (x + w - 18 - g.getFontMetrics().stringWidth(valeur)), (float) (y + 99));
-        if (survolCible(armee)) {
-            surbrillance(g, new RoundRectangle2D.Double(x + 4, y + 4, w - 8, ENTETE_H - 6, 18, 18), Theme.DEGATS);
-        }
-
-        g.setColor(Theme.alpha(cg, 0.25));
-        g.setStroke(new BasicStroke(1f));
-        g.draw(new Line2D.Double(x + 16, y + ENTETE_H + 2, x + w - 16, y + ENTETE_H + 2));
-
-        List<ParcoursArbre.Noeud> noeuds = ParcoursArbre.descendants(armee);
-        double haut = y + ENTETE_H + 10;
-        double dispo = h - ENTETE_H - 18;
-        double ligneH = Math.min(36, dispo / Math.max(1, noeuds.size()));
-        for (int k = 0; k < noeuds.size(); k++) {
-            ParcoursArbre.Noeud n = noeuds.get(k);
-            dessinerLigne(g, n.unite(), n.profondeur(), i, x + 14, haut + k * ligneH, w - 28, ligneH);
-        }
-        g.setComposite(ancien);
-
-        if (elimine) {
-            Graphics2D t = (Graphics2D) g.create();
-            t.translate(x + w / 2, y + h / 2);
-            t.rotate(Math.toRadians(-14));
-            Font f = Theme.titre(40);
-            GlyphVector gv = f.createGlyphVector(t.getFontRenderContext(), "ANEANTIE");
-            Rectangle2D b = gv.getVisualBounds();
-            Shape s = AffineTransform.getTranslateInstance(-b.getWidth() / 2 - b.getX(), b.getHeight() / 2)
-                    .createTransformedShape(gv.getOutline());
-            RoundRectangle2D cadre = new RoundRectangle2D.Double(-b.getWidth() / 2 - 22, -b.getHeight() / 2 - 16,
-                    b.getWidth() + 44, b.getHeight() + 32, 12, 12);
-            t.setColor(new Color(20, 4, 8, 200));
-            t.fill(cadre);
-            t.setStroke(new BasicStroke(3f));
-            t.setColor(Theme.DEGATS);
-            t.draw(cadre);
-            t.fill(s);
-            t.dispose();
+        g.setColor(Theme.alpha(Theme.OR, 0.8));
+        g.draw(toile);
+        double vagueCentre = elimine ? 7 : Math.sin(temps * 4 - 2.5) * 2.2;
+        Icones.blason(g, i, fx + dir * longueur * 0.45, haut + hauteur / 2 + vagueCentre, 12, elimine);
+        drapeaux[i] = new Rectangle2D.Double(versDroite ? fx - 10 : fx - longueur - 10, haut - 12, longueur + 20,
+                hauteur + 30);
+        if ((mode == Mode.CIBLE_TOTALE || mode == Mode.CIBLE_FRAPPE)
+                && selectionSous(sourisX, sourisY) == joueurs.get(i).getArmee()) {
+            surbrillance(g, drapeaux[i], Theme.DEGATS);
         }
     }
 
-    private boolean survolCible(IUnite u) {
-        Rectangle2D z = zones.get(u);
-        return z != null && estSelectionnable(u) && z.contains(sourisX, sourisY);
-    }
-
-    private void surbrillance(Graphics2D g, Shape forme, Color c) {
-        g.setColor(Theme.alpha(c, 0.18));
-        g.fill(forme);
-        g.setStroke(new BasicStroke(1.6f));
-        g.setColor(Theme.alpha(c, 0.9));
-        g.draw(forme);
-    }
-
-    private void dessinerLigne(Graphics2D g, IUnite u, int profondeur, int guilde, double x, double y,
-                               double w, double h) {
-        Color cg = Theme.guilde(guilde);
-        boolean vivant = u.estVivant();
-        double xi = x + (profondeur - 1) * 20;
-        double cy = y + h / 2;
-        Rectangle2D zone = new Rectangle2D.Double(xi - 6, y + 1, x + w - xi + 6, h - 2);
-        zones.put(u, zone);
-        boolean selectionnable = estSelectionnable(u);
-        boolean survol = selectionnable && zone.contains(sourisX, sourisY);
-        RoundRectangle2D fondLigne = new RoundRectangle2D.Double(zone.getX(), zone.getY(), zone.getWidth(),
-                zone.getHeight(), 12, 12);
-
-        if (profondeur > 1) {
-            g.setColor(Theme.alpha(cg, 0.3));
-            g.setStroke(new BasicStroke(1.2f));
-            double gx = xi - 13;
-            g.draw(new Line2D.Double(gx, y - h / 2 + 4, gx, cy));
-            g.draw(new Line2D.Double(gx, cy, xi - 7, cy));
-        }
-        if (u == attaquantChoisi) {
-            surbrillance(g, fondLigne, Theme.OR);
-        } else if (survol) {
-            surbrillance(g, fondLigne, mode == Mode.CIBLE_FRAPPE ? Theme.DEGATS : mode == Mode.SOIGNEUR
-                    ? Theme.SOIN : Theme.OR);
-        } else if (selectionnable) {
-            g.setStroke(new BasicStroke(1.2f));
-            g.setColor(Theme.alpha(mode == Mode.CIBLE_FRAPPE ? Theme.DEGATS : Theme.OR,
-                    0.15 + 0.3 * (0.5 + 0.5 * Math.sin(temps * 5))));
-            g.draw(fondLigne);
-        }
-        Double flash = flashs.get(u);
-        if (flash != null) {
-            g.setColor(Theme.alpha(flash > 0 ? Theme.DEGATS : Theme.SOIN, Math.abs(flash) / 0.45 * 0.35));
-            g.fill(fondLigne);
-        }
-
-        Composite ancien = g.getComposite();
-        if (!vivant) {
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.42f));
-        }
-        float taillePolice = (float) Math.min(13.5, h * 0.38);
-        double droite = x + w - 8;
-        double r;
-        String nomAffiche;
-        Color couleurNom;
-        if (u.estComposite()) {
-            r = h * 0.36;
-            Icones.groupe(g, xi + r, cy, r * 0.95, vivant ? cg : Theme.MORT);
-            nomAffiche = u.getNom();
-            couleurNom = Theme.melange(cg, Theme.TEXTE, 0.45);
-        } else {
-            r = h * 0.42;
-            portrait(g, u, xi + r, cy, r, guilde);
-            nomAffiche = u.getNom();
-            couleurNom = Theme.TEXTE;
-        }
-        centres.put(u, new Point2D.Double(xi + r, cy));
-        double nx = xi + 2 * r + 8;
-        g.setFont(Theme.texte(Font.BOLD, taillePolice));
-        g.setColor(couleurNom);
-        g.drawString(nomAffiche, (float) nx, (float) (cy - 2));
-        FontMetrics fm = g.getFontMetrics();
-        double finNom = nx + fm.stringWidth(nomAffiche);
-        if (u instanceof UniteElementaire ue) {
-            g.setFont(Theme.texte(Font.PLAIN, taillePolice - 2.5f));
-            g.setColor(Theme.alpha(Theme.type(u), 0.9));
-            g.drawString(ue.getType(), (float) (finNom + 6), (float) (cy - 2));
-        } else if (vivant && vivantesDirectes(u) >= 2) {
-            pastille(g, "+10%", finNom + 8, cy - 12, Theme.OR);
-        }
-        if (!vivant) {
-            g.setColor(Theme.TEXTE);
-            g.setStroke(new BasicStroke(1.4f));
-            g.draw(new Line2D.Double(nx - 2, cy - 6, finNom + 2, cy - 6));
-        }
-        barreVie(g, u, nx, cy + 3, droite - 70 - nx, 6, false);
-
-        g.setFont(Theme.texte(Font.BOLD, taillePolice - 1.5f));
-        g.setColor(Theme.OR);
-        String atq = "ATQ " + u.getPuissanceAttaque();
-        g.drawString(atq, (float) (droite - fm.stringWidth(atq) + 4), (float) (cy - 2));
-        g.setFont(Theme.texte(Font.PLAIN, taillePolice - 2.5f));
-        g.setColor(Theme.TEXTE_DOUX);
-        String pv = u.getPointsDeVie() + "/" + u.getPointsDeVieMax();
-        g.drawString(pv, (float) (droite - g.getFontMetrics().stringWidth(pv)), (float) (cy + 11));
-        g.setComposite(ancien);
-        if (!vivant && !u.estComposite()) {
-            pastille(g, "K.O.", droite - 100, cy - 8, Theme.DEGATS);
+    private void dessinerAura(Graphics2D g, Aura a) {
+        double k = a.age / 1.8;
+        double force = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
+        double rx = a.rx * (0.7 + 0.3 * Math.min(1, k * 3));
+        Graphics2D e = (Graphics2D) g.create();
+        e.translate(a.x, a.y);
+        e.scale(1, a.ry / rx);
+        e.setPaint(new RadialGradientPaint(0f, 0f, (float) rx, new float[] {0f, 0.7f, 1f},
+                new Color[] {Theme.alpha(a.couleur, 0.5 * force), Theme.alpha(a.couleur, 0.22 * force),
+                    Theme.alpha(a.couleur, 0)}));
+        e.fill(new Ellipse2D.Double(-rx, -rx, rx * 2, rx * 2));
+        e.setStroke(new BasicStroke(3f));
+        e.setColor(Theme.alpha(a.couleur, 0.75 * force));
+        e.draw(new Ellipse2D.Double(-rx * 0.9, -rx * 0.9, rx * 1.8, rx * 1.8));
+        e.dispose();
+        for (int c = 0; c < 7; c++) {
+            double px = a.x - rx * 0.8 + c * rx * 0.27;
+            double hauteur = (60 + 30 * Math.sin(c * 1.7)) * force;
+            g.setPaint(new GradientPaint((float) px, (float) a.y, Theme.alpha(a.couleur, 0.4 * force),
+                    (float) px, (float) (a.y - hauteur - 50), Theme.alpha(a.couleur, 0)));
+            g.fill(new Rectangle2D.Double(px - 3, a.y - hauteur - 50, 6, hauteur + 50));
         }
     }
 
-    private static int vivantesDirectes(IUnite u) {
-        int n = 0;
-        for (IUnite e : u.getSousUnites()) {
-            if (e.estVivant()) {
-                n++;
-            }
-        }
-        return n;
-    }
-
-    private void pastille(Graphics2D g, String texte, double x, double y, Color c) {
-        g.setFont(Theme.texte(Font.BOLD, 9.5f));
-        FontMetrics fm = g.getFontMetrics();
-        RoundRectangle2D rr = new RoundRectangle2D.Double(x, y, fm.stringWidth(texte) + 10, 14, 14, 14);
-        g.setColor(Theme.alpha(c, 0.2));
-        g.fill(rr);
-        g.setColor(Theme.alpha(c, 0.8));
-        g.setStroke(new BasicStroke(1f));
-        g.draw(rr);
-        g.setColor(c);
-        g.drawString(texte, (float) (x + 5), (float) (y + 10.5));
-    }
-
-    private void portrait(Graphics2D g, IUnite u, double cx, double cy, double r, int guilde) {
-        boolean v = u.estVivant();
-        Color ct = v ? Theme.type(u) : Theme.MORT;
-        if (v) {
-            g.setPaint(new RadialGradientPaint((float) cx, (float) cy, (float) (r * 1.7), new float[] {0f, 1f},
-                    new Color[] {Theme.alpha(ct, 0.35), Theme.alpha(ct, 0)}));
-            g.fill(new Ellipse2D.Double(cx - r * 1.7, cy - r * 1.7, r * 3.4, r * 3.4));
-        }
-        Ellipse2D cercle = new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2);
-        g.setPaint(new RadialGradientPaint((float) (cx - r * 0.3), (float) (cy - r * 0.35), (float) (r * 1.5),
-                new float[] {0f, 0.55f, 1f},
-                new Color[] {Theme.melange(ct, Color.WHITE, 0.2), Theme.melange(ct, Color.BLACK, 0.35),
-                    Theme.melange(ct, Color.BLACK, 0.75)}));
-        g.fill(cercle);
-        g.setStroke(new BasicStroke(1.8f));
-        g.setColor(v ? Theme.guilde(guilde) : Theme.MORT);
-        g.draw(cercle);
-        Icones.unite(g, u, cx, cy, r * 0.6, v);
-        Double flash = flashs.get(u);
-        if (flash != null && flash > 0) {
-            g.setColor(new Color(255, 255, 255, (int) (Math.min(1, flash / 0.45) * 210)));
-            g.fill(cercle);
-        }
-    }
-
-    private void barreVie(Graphics2D g, IUnite u, double x, double y, double w, double h, boolean grande) {
-        if (w <= 4) {
+    private void dessinerSelections(Graphics2D g) {
+        if (ecran != Ecran.JEU) {
             return;
         }
-        double max = Math.max(1, u.getPointsDeVieMax());
-        double reel = u.getPointsDeVie();
-        double fantome = pvFantomes.getOrDefault(u, reel);
-        RoundRectangle2D cadre = new RoundRectangle2D.Double(x, y, w, h, h, h);
-        g.setColor(new Color(0, 0, 0, 160));
-        g.fill(cadre);
-        Shape ancienClip = g.getClip();
-        g.clip(cadre);
-        double rr = reel / max;
-        double rf = Math.max(0, fantome / max);
-        if (rf > rr) {
-            g.setColor(new Color(255, 236, 236, 230));
-            g.fill(new Rectangle2D.Double(x, y, w * rf, h));
-        } else if (rf < rr) {
-            g.setColor(Theme.alpha(Theme.SOIN, 0.9));
-            g.fill(new Rectangle2D.Double(x, y, w * rr, h));
+        IUnite survol = selectionSous(sourisX, sourisY);
+        double pulse = 0.5 + 0.5 * Math.sin(temps * 5);
+        for (Soldat s : soldats) {
+            if (s.mortAffiche) {
+                continue;
+            }
+            Color c = null;
+            double a = 0;
+            if (attaquantChoisi != null && contient(attaquantChoisi, s.unite)) {
+                c = Theme.OR;
+                a = 0.9;
+            } else if (survol != null && contient(survol, s.unite)) {
+                c = mode == Mode.ATTAQUANT ? Theme.OR : Theme.DEGATS;
+                a = 0.95;
+            } else if (estCibleValide(s)) {
+                c = mode == Mode.ATTAQUANT ? Theme.OR : Theme.DEGATS;
+                a = 0.2 + 0.25 * pulse;
+            }
+            if (c != null) {
+                g.setStroke(new BasicStroke(2.2f));
+                g.setColor(Theme.alpha(c, a));
+                g.draw(new Ellipse2D.Double(s.x - 16, s.y - 6, 32, 11));
+                g.setColor(Theme.alpha(c, a * 0.25));
+                g.fill(new Ellipse2D.Double(s.x - 16, s.y - 6, 32, 11));
+            }
         }
-        Color c = Theme.vie(rr);
-        g.setPaint(new GradientPaint(0, (float) y, Theme.melange(c, Color.WHITE, 0.25), 0, (float) (y + h),
-                Theme.melange(c, Color.BLACK, 0.3)));
-        g.fill(new Rectangle2D.Double(x, y, w * Math.min(rr, rf), h));
-        g.setColor(new Color(255, 255, 255, 40));
-        g.fill(new Rectangle2D.Double(x, y, w, h * 0.45));
-        g.setClip(ancienClip);
+        for (Bloc b : blocs) {
+            if (b.groupe == survol || b.groupe == attaquantChoisi) {
+                Color c = b.guilde == actif ? Theme.OR : Theme.DEGATS;
+                RoundRectangle2D rr = new RoundRectangle2D.Double(b.zone.getX(), b.zone.getY(), b.zone.getWidth(),
+                        b.zone.getHeight(), 18, 18);
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f,
+                        new float[] {8f, 6f}, (float) (18 - (temps * 40) % 18)));
+                g.setColor(Theme.alpha(c, 0.8));
+                g.draw(rr);
+            }
+        }
+    }
+
+    private boolean estCibleValide(Soldat s) {
+        if (ecran != Ecran.JEU || ia[actif] || !s.unite.estVivant()) {
+            return false;
+        }
+        return switch (mode) {
+            case CIBLE_TOTALE, CIBLE_FRAPPE -> s.guilde != actif;
+            case ATTAQUANT -> s.guilde == actif;
+            default -> false;
+        };
+    }
+
+    private static boolean contient(IUnite racine, IUnite cible) {
+        if (racine == cible) {
+            return true;
+        }
+        for (IUnite e : racine.getSousUnites()) {
+            if (contient(e, cible)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void dessinerEtiquette(Graphics2D g, Bloc b) {
+        if (b.soldats.isEmpty()) {
+            return;
+        }
+        double haut = b.soldats.stream().mapToDouble(s -> s.hy).min().orElse(b.zone.getY()) - 98;
+        double cx = b.zone.getCenterX();
+        boolean vivant = b.groupe.estVivant();
+        Color cg = vivant ? Theme.guilde(b.guilde) : Theme.MORT;
+        g.setFont(Theme.texte(Font.BOLD, 11.5f));
+        FontMetrics fm = g.getFontMetrics();
+        String nom = b.groupe.getNom();
+        double l = Math.max(fm.stringWidth(nom) + 20, 110);
+        RoundRectangle2D cadre = new RoundRectangle2D.Double(cx - l / 2, haut - 13, l, 25, 10, 10);
+        g.setColor(new Color(10, 12, 24, vivant ? 190 : 120));
+        g.fill(cadre);
         g.setStroke(new BasicStroke(1f));
-        g.setColor(new Color(255, 255, 255, 45));
+        g.setColor(Theme.alpha(cg, 0.8));
         g.draw(cadre);
-        if (grande) {
-            String t = "PV  " + (int) reel + " / " + (int) max;
-            Font f = Theme.texte(Font.BOLD, 11f);
-            g.setFont(f);
-            FontMetrics fm = g.getFontMetrics();
-            float tx = (float) (x + (w - fm.stringWidth(t)) / 2);
-            float ty = (float) (y + h / 2 + fm.getAscent() / 2.0 - 1.5);
-            g.setColor(new Color(0, 0, 0, 170));
-            g.drawString(t, tx + 1, ty + 1);
-            g.setColor(Color.WHITE);
-            g.drawString(t, tx, ty);
+        g.setColor(vivant ? Theme.melange(cg, Theme.TEXTE, 0.4) : Theme.MORT);
+        g.drawString(nom, (float) (cx - fm.stringWidth(nom) / 2.0), (float) haut + 1);
+        double ratio = b.groupe.getPointsDeVieMax() == 0 ? 0
+                : pvAffiches(b.groupe) / (double) b.groupe.getPointsDeVieMax();
+        double bl = l - 16;
+        g.setColor(new Color(0, 0, 0, 160));
+        g.fill(new RoundRectangle2D.Double(cx - bl / 2, haut + 5, bl, 4, 4, 4));
+        g.setColor(Theme.vie(ratio));
+        g.fill(new RoundRectangle2D.Double(cx - bl / 2, haut + 5, bl * ratio, 4, 4, 4));
+    }
+
+    private int pvAffiches(IUnite groupe) {
+        int total = 0;
+        for (IUnite f : ParcoursArbre.feuilles(groupe)) {
+            Soldat s = soldatDe.get(f);
+            if (s != null && !s.mortAffiche) {
+                total += s.pvAffiche;
+            }
+        }
+        return total;
+    }
+
+    private void petiteBarre(Graphics2D g, Soldat s) {
+        double ratio = s.pvAffiche / (double) s.unite.getPointsDeVieMax();
+        if (ratio >= 0.999) {
+            return;
+        }
+        double x = s.x - 12;
+        double y = s.y - 72;
+        g.setColor(new Color(0, 0, 0, 170));
+        g.fill(new Rectangle2D.Double(x - 1, y - 1, 26, 5));
+        g.setColor(Theme.vie(ratio));
+        g.fill(new Rectangle2D.Double(x, y, 24 * ratio, 3));
+    }
+
+    private void dessinerVisee(Graphics2D g) {
+        if (ecran != Ecran.JEU || sourisX < 0 || (mode != Mode.CIBLE_TOTALE && mode != Mode.CIBLE_FRAPPE)) {
+            return;
+        }
+        Point2D depart = centreDe(mode == Mode.CIBLE_FRAPPE && attaquantChoisi != null
+                ? attaquantChoisi : joueurs.get(actif).getArmee());
+        double dy = depart.getY() - 30;
+        Color c = Theme.DEGATS;
+        QuadCurve2D courbe = new QuadCurve2D.Double(depart.getX(), dy, (depart.getX() + sourisX) / 2,
+                Math.min(dy, sourisY) - 90, sourisX, sourisY);
+        g.setStroke(new BasicStroke(7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(Theme.alpha(c, 0.18));
+        g.draw(courbe);
+        g.setStroke(new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f,
+                new float[] {10f, 8f}, (float) (18 - (temps * 60) % 18)));
+        g.setColor(c);
+        g.draw(courbe);
+        double r = 12 + 3 * Math.sin(temps * 8);
+        g.setStroke(new BasicStroke(2f));
+        g.draw(new Ellipse2D.Double(sourisX - r, sourisY - r, r * 2, r * 2));
+    }
+
+    private void surbrillance(Graphics2D g, Rectangle2D zone, Color c) {
+        RoundRectangle2D rr = new RoundRectangle2D.Double(zone.getX(), zone.getY(), zone.getWidth(), zone.getHeight(),
+                12, 12);
+        g.setColor(Theme.alpha(c, 0.15));
+        g.fill(rr);
+        g.setStroke(new BasicStroke(1.6f));
+        g.setColor(Theme.alpha(c, 0.9));
+        g.draw(rr);
+    }
+
+    // ------------------------------------------------------------------
+    // Interface : cartes des guildes, barre d'actions, banniere, infobulle
+    // ------------------------------------------------------------------
+
+    private void dessinerHaut(Graphics2D g) {
+        for (int i = 0; i < joueurs.size(); i++) {
+            Joueur j = joueurs.get(i);
+            Escouade armee = j.getArmee();
+            Color cg = Theme.guilde(i);
+            double x = 14 + i * 420;
+            double w = 412;
+            double y = 6;
+            double h = 58;
+            cartes[i] = new Rectangle2D.Double(x, y, w, h);
+            RoundRectangle2D carte = new RoundRectangle2D.Double(x, y, w, h, 16, 16);
+            boolean estActif = i == actif && ecran == Ecran.JEU;
+            if (estActif) {
+                double pulse = 0.5 + 0.5 * Math.sin(temps * 4);
+                for (int k = 4; k >= 1; k--) {
+                    g.setStroke(new BasicStroke(k * 3f));
+                    g.setColor(Theme.alpha(cg, 0.06 * (0.5 + pulse)));
+                    g.draw(carte);
+                }
+            }
+            g.setPaint(new GradientPaint(0, (float) y, Theme.CARTE_HAUT, 0, (float) (y + h), Theme.CARTE_BAS));
+            g.fill(carte);
+            g.setStroke(new BasicStroke(estActif ? 2f : 1.2f));
+            g.setColor(Theme.alpha(j.estElimine() ? Theme.MORT : cg, estActif ? 1 : 0.5));
+            g.draw(carte);
+            if ((mode == Mode.CIBLE_TOTALE || mode == Mode.CIBLE_FRAPPE) && selectionSous(sourisX, sourisY) == armee) {
+                surbrillance(g, cartes[i], Theme.DEGATS);
+            }
+            Icones.blason(g, i, x + 28, y + 28, 17, j.estElimine());
+            g.setFont(Theme.titre(15.5f));
+            g.setColor(j.estElimine() ? Theme.MORT : Theme.TEXTE);
+            g.drawString(j.getFaction().toUpperCase(), (float) x + 54, (float) y + 22);
+            g.setFont(Theme.texte(Font.PLAIN, 11f));
+            g.setColor(Theme.TEXTE_DOUX);
+            int index = i;
+            long vivants = soldats.stream().filter(s -> s.guilde == index && !s.mortAffiche).count();
+            g.drawString(j.getNom() + (ia[i] ? " (IA)" : "") + "  -  " + vivants + " soldats", (float) x + 54,
+                    (float) y + 37);
+            double bw = w - 54 - 96;
+            double ratio = pvAffiches(armee) / (double) armee.getPointsDeVieMax();
+            g.setColor(new Color(0, 0, 0, 160));
+            g.fill(new RoundRectangle2D.Double(x + 54, y + 43, bw, 8, 8, 8));
+            g.setPaint(new GradientPaint(0, (float) y + 43, Theme.melange(Theme.vie(ratio), Color.WHITE, 0.25),
+                    0, (float) y + 51, Theme.vie(ratio)));
+            g.fill(new RoundRectangle2D.Double(x + 54, y + 43, bw * ratio, 8, 8, 8));
+            g.setFont(Theme.texte(Font.BOLD, 12f));
+            g.setColor(Theme.OR);
+            String atq = "ATQ " + armee.getPuissanceAttaque();
+            g.drawString(atq, (float) (x + w - 12 - g.getFontMetrics().stringWidth(atq)), (float) y + 22);
+            g.setColor(Theme.TEXTE);
+            String pv = pvAffiches(armee) + " PV";
+            g.drawString(pv, (float) (x + w - 12 - g.getFontMetrics().stringWidth(pv)), (float) y + 51);
+            boolean defend = soldatsVivants(armee).stream().anyMatch(s -> s.defense > 0.5);
+            if (defend) {
+                g.setFont(Theme.texte(Font.BOLD, 10f));
+                String t = "DEF +" + Combat.BONUS_DEFENSE;
+                double tw = g.getFontMetrics().stringWidth(t) + 10;
+                RoundRectangle2D p = new RoundRectangle2D.Double(x + w - 12 - tw, y + 27, tw, 13, 13, 13);
+                g.setColor(new Color(120, 190, 255, 60));
+                g.fill(p);
+                g.setColor(new Color(160, 215, 255));
+                g.draw(p);
+                g.drawString(t, (float) (x + w - 7 - tw), (float) y + 37.5f);
+            }
         }
     }
 
@@ -1328,28 +1346,28 @@ public final class PanneauJeu extends JPanel {
             return;
         }
         Joueur j = joueurs.get(actif);
-        Color cg = Theme.guilde(actif);
-        Icones.blason(g, actif, 56, BARRE_Y + 44, 24, false);
-        g.setFont(Theme.titre(18));
-        g.setColor(cg);
-        g.drawString("TOUR DE " + j.getNom().toUpperCase() + (ia[actif] ? "  (IA)" : ""), 92f, (float) BARRE_Y + 32);
+        Icones.blason(g, actif, 52, BARRE_Y + 44, 24, false);
+        g.setFont(Theme.titre(17));
+        g.setColor(Theme.guilde(actif));
+        g.drawString(Decor.tronquer(g, "TOUR " + tour + " - " + j.getNom().toUpperCase(), 300), 86f,
+                (float) BARRE_Y + 32);
         g.setFont(Theme.texte(Font.PLAIN, 12.5f));
         g.setColor(Theme.TEXTE_DOUX);
-        g.drawString("Guilde " + j.getFaction(), 92f, (float) BARRE_Y + 51);
+        g.drawString("Guilde " + j.getFaction() + (ia[actif] ? "  (IA)" : ""), 86f, (float) BARRE_Y + 51);
         g.setFont(Theme.texte(Font.ITALIC, 12.5f));
         g.setColor(Theme.OR_PALE);
-        g.drawString(consigne(), 92f, (float) BARRE_Y + 72);
+        g.drawString(Decor.tronquer(g, consigne(), 310), 86f, (float) BARRE_Y + 72);
 
-        double jx = 1000;
+        double jx = 1022;
         g.setFont(Theme.texte(Font.BOLD, 10f));
         g.setColor(Theme.OR);
         g.drawString("JOURNAL DE BATAILLE", (float) jx, (float) BARRE_Y + 22);
-        g.setFont(Theme.texte(Font.PLAIN, 11.5f));
+        g.setFont(Theme.texte(Font.PLAIN, 11f));
         int debut = Math.max(0, journal.size() - 4);
         for (int k = debut; k < journal.size(); k++) {
             int rang = journal.size() - 1 - k;
             g.setColor(Theme.alpha(Theme.TEXTE, 1 - rang * 0.22));
-            g.drawString(tronquer(g, journal.get(k), 250), (float) jx, (float) (BARRE_Y + 40 + (k - debut) * 15));
+            g.drawString(Decor.tronquer(g, journal.get(k), 232), (float) jx, (float) (BARRE_Y + 40 + (k - debut) * 15));
         }
     }
 
@@ -1358,24 +1376,12 @@ public final class PanneauJeu extends JPanel {
             return "L'IA prepare son coup...";
         }
         return switch (mode) {
-            case ACTION -> "Choisissez une action.";
-            case CIBLE_TOTALE -> "Cliquez sur une guilde ennemie a attaquer.";
-            case ATTAQUANT -> "Choisissez l'escouade ou l'unite qui frappe.";
-            case CIBLE_FRAPPE -> "Choisissez la cible : armee, groupe ou unite.";
-            case SOIGNEUR -> "Choisissez le soigneur qui intervient.";
-            default -> "Resolution du combat...";
+            case ACTION -> "Choisissez une action pour votre armee.";
+            case CIBLE_TOTALE -> "Cliquez sur une armee ennemie.";
+            case ATTAQUANT -> "Cliquez sur l'escouade qui va attaquer.";
+            case CIBLE_FRAPPE -> "Cliquez sur l'escouade ennemie (ou son etendard).";
+            default -> "Les armees s'affrontent...";
         };
-    }
-
-    private static String tronquer(Graphics2D g, String s, double largeur) {
-        FontMetrics fm = g.getFontMetrics();
-        if (fm.stringWidth(s) <= largeur) {
-            return s;
-        }
-        while (s.length() > 1 && fm.stringWidth(s + "...") > largeur) {
-            s = s.substring(0, s.length() - 1);
-        }
-        return s + "...";
     }
 
     private void dessinerBoutons(Graphics2D g) {
@@ -1385,7 +1391,7 @@ public final class PanneauJeu extends JPanel {
             RoundRectangle2D rr = new RoundRectangle2D.Double(z.getX(), z.getY(), z.getWidth(), z.getHeight(), 16, 16);
             double cy = z.getCenterY();
             if (!b.actif) {
-                g.setColor(new Color(20, 22, 36, 200));
+                g.setColor(new Color(20, 22, 36, 210));
                 g.fill(rr);
                 g.setColor(Theme.alpha(Theme.MORT, 0.6));
                 g.setStroke(new BasicStroke(1.2f));
@@ -1413,10 +1419,10 @@ public final class PanneauJeu extends JPanel {
             }
             Color texte = !b.actif ? Theme.MORT : b.selectionne ? new Color(0x2A1606) : Theme.OR_PALE;
             boolean compact = z.getWidth() < 200;
-            double tx = z.getX() + (compact ? 46 : 52);
-            Icones.bouton(g, b.icone, z.getX() + (compact ? 25 : 28), cy, z.getHeight() > 50 ? 11 : 9, texte);
-            float taille = compact ? 14f : z.getHeight() > 50 ? 15.5f : 14f;
-            double place = z.getMaxX() - tx - 10;
+            double tx = z.getX() + (compact ? 40 : 52);
+            Icones.bouton(g, b.icone, z.getX() + (compact ? 21 : 28), cy, compact ? 9.5 : 11, texte);
+            float taille = compact ? 13f : z.getHeight() > 50 ? 15.5f : 14f;
+            double place = z.getMaxX() - tx - 8;
             while (taille > 9 && g.getFontMetrics(Theme.titre(taille)).stringWidth(b.libelle) > place) {
                 taille -= 0.5f;
             }
@@ -1425,45 +1431,11 @@ public final class PanneauJeu extends JPanel {
             boolean avecSous = !b.sousTitre.isEmpty();
             g.drawString(b.libelle, (float) tx, (float) (cy + (avecSous ? -2 : 5)));
             if (avecSous) {
-                g.setFont(Theme.texte(Font.PLAIN, 11f));
+                g.setFont(Theme.texte(Font.PLAIN, 10.5f));
                 g.setColor(b.selectionne ? new Color(0x5A3A10) : Theme.alpha(Theme.TEXTE_DOUX, b.actif ? 1 : 0.5));
-                g.drawString(b.sousTitre, (float) tx, (float) (cy + 15));
+                g.drawString(Decor.tronquer(g, b.sousTitre, place), (float) tx, (float) (cy + 15));
             }
         }
-    }
-
-    private void dessinerVisee(Graphics2D g) {
-        Point2D depart;
-        Color c;
-        if (mode == Mode.CIBLE_FRAPPE && attaquantChoisi != null) {
-            depart = centre(attaquantChoisi);
-            c = Theme.DEGATS;
-        } else if (mode == Mode.CIBLE_TOTALE) {
-            depart = centre(joueurs.get(actif).getArmee());
-            c = Theme.OR;
-        } else {
-            return;
-        }
-        if (sourisX < 0) {
-            return;
-        }
-        double mx = (depart.getX() + sourisX) / 2;
-        double my = Math.min(depart.getY(), sourisY) - 80;
-        QuadCurve2D courbe = new QuadCurve2D.Double(depart.getX(), depart.getY(), mx, my, sourisX, sourisY);
-        g.setStroke(new BasicStroke(7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(Theme.alpha(c, 0.18));
-        g.draw(courbe);
-        g.setStroke(new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f,
-                new float[] {10f, 8f}, (float) (18 - (temps * 60) % 18)));
-        g.setColor(c);
-        g.draw(courbe);
-        double r = 12 + 3 * Math.sin(temps * 8);
-        g.setStroke(new BasicStroke(2f));
-        g.draw(new Ellipse2D.Double(sourisX - r, sourisY - r, r * 2, r * 2));
-        g.draw(new Line2D.Double(sourisX - r - 6, sourisY, sourisX - r + 4, sourisY));
-        g.draw(new Line2D.Double(sourisX + r - 4, sourisY, sourisX + r + 6, sourisY));
-        g.draw(new Line2D.Double(sourisX, sourisY - r - 6, sourisX, sourisY - r + 4));
-        g.draw(new Line2D.Double(sourisX, sourisY + r - 4, sourisX, sourisY + r + 6));
     }
 
     private void dessinerBanniere(Graphics2D g0) {
@@ -1477,57 +1449,62 @@ public final class PanneauJeu extends JPanel {
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, a))));
         double y = 300;
         g.setPaint(new LinearGradientPaint(0, 0, LARGEUR, 0, new float[] {0f, 0.25f, 0.75f, 1f},
-                new Color[] {new Color(0, 0, 0, 0), new Color(6, 4, 14, 225), new Color(6, 4, 14, 225),
+                new Color[] {new Color(0, 0, 0, 0), new Color(6, 4, 14, 215), new Color(6, 4, 14, 215),
                     new Color(0, 0, 0, 0)}));
         g.fillRect(0, (int) y, LARGEUR, 110);
         g.setPaint(new LinearGradientPaint(0, 0, LARGEUR, 0, new float[] {0f, 0.5f, 1f},
                 new Color[] {Theme.alpha(banniereCouleur, 0), banniereCouleur, Theme.alpha(banniereCouleur, 0)}));
         g.fillRect(0, (int) y, LARGEUR, 2);
         g.fillRect(0, (int) y + 108, LARGEUR, 2);
-        Font f = Theme.titre(46);
-        GlyphVector gv = f.createGlyphVector(g.getFontRenderContext(), banniereTitre);
-        Rectangle2D b = gv.getVisualBounds();
-        Shape s = AffineTransform.getTranslateInstance(LARGEUR / 2.0 - b.getWidth() / 2 - b.getX() - glisse, y + 64)
-                .createTransformedShape(gv.getOutline());
-        g.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(new Color(10, 6, 16));
-        g.draw(s);
-        g.setColor(banniereCouleur);
-        g.fill(s);
-        texteCentre(g, banniereSous, Theme.texte(Font.PLAIN, 16), Theme.TEXTE, LARGEUR / 2.0 + glisse, y + 92);
+        Decor.texteContour(g, banniereTitre, Theme.titre(46), banniereCouleur, LARGEUR / 2.0 - glisse, y + 64);
+        Decor.texteCentre(g, banniereSous, Theme.texte(Font.PLAIN, 16), Theme.TEXTE, LARGEUR / 2.0 + glisse, y + 92);
         g.dispose();
     }
 
     private void dessinerInfobulle(Graphics2D g) {
-        IUnite u = noeudSous(sourisX, sourisY);
-        if (u == null || mode == Mode.ATTENTE || temps - banniereDebut < 1.8) {
+        if (mode == Mode.ATTENTE || temps - banniereDebut < 1.8 || sourisY > BARRE_Y || sourisY < 70) {
             return;
         }
         List<String> lignes = new ArrayList<>();
-        if (u instanceof UniteElementaire ue) {
-            lignes.add(ue.getType().toUpperCase() + "  -  " + u.getNom());
-            lignes.add("PV " + u.getPointsDeVie() + " / " + u.getPointsDeVieMax());
-            String atq = "ATQ " + u.getPuissanceAttaque() + "  -  Cout " + u.getCout() + " PO";
-            if (u instanceof Guerrier gu) {
-                atq += "  -  ARM " + gu.getArmure();
+        int guilde = 0;
+        Soldat sous = null;
+        for (Soldat s : soldats) {
+            if (!s.mortAffiche && s.contient(sourisX, sourisY)) {
+                sous = s;
             }
-            lignes.add(atq);
-            if (u instanceof Soigneur s) {
-                lignes.add("Soin : +" + s.getPuissanceSoin() + " PV repartis");
+        }
+        if (sous != null) {
+            IUnite u = sous.unite;
+            guilde = sous.guilde;
+            String type = u instanceof UniteElementaire ue ? ue.getType() : "Unite";
+            lignes.add(type.toUpperCase() + "  -  " + u.getNom());
+            lignes.add("PV " + u.getPointsDeVie() + " / " + u.getPointsDeVieMax() + "   ATQ " + u.getPuissanceAttaque());
+            String arme = u instanceof Guerrier ? "Epee : court frapper au corps a corps"
+                    : u instanceof Mage ? "Magie : lance des orbes a distance"
+                    : u instanceof Soigneur ? "Soin : +40 PV repartis sur son escouade"
+                    : "Arc : tire des fleches depuis sa place";
+            lignes.add(arme);
+            if (u instanceof UniteElementaire ue && ue.getBonusDefense() > 0) {
+                lignes.add("En defense : armure +" + ue.getBonusDefense());
             }
-            lignes.add("Feuille du Composite");
         } else {
-            boolean racine = joueurs.stream().anyMatch(j -> j.getArmee() == u);
-            lignes.add((racine ? "ARMEE  -  " : "GROUPE  -  ") + u.getNom());
-            lignes.add("PV " + u.getPointsDeVie() + " / " + u.getPointsDeVieMax());
-            int viv = vivantesDirectes(u);
-            lignes.add("ATQ totale " + u.getPuissanceAttaque() + (viv >= 2 ? "  (synergie +10%)" : ""));
-            lignes.add("Membres vivants : " + viv + " / " + u.getSousUnites().size());
-            lignes.add("Composite : delegue a ses " + u.getSousUnites().size() + " sous-unites");
+            for (Bloc b : blocs) {
+                if (b.zone.contains(sourisX, sourisY)) {
+                    IUnite u = b.groupe;
+                    guilde = b.guilde;
+                    long viv = u.getSousUnites().stream().filter(IUnite::estVivant).count();
+                    lignes.add("ESCOUADE  -  " + u.getNom());
+                    lignes.add("PV " + u.getPointsDeVie() + " / " + u.getPointsDeVieMax());
+                    lignes.add("ATQ " + u.getPuissanceAttaque() + (viv >= 2 ? "  (synergie +10%)" : ""));
+                    lignes.add("Composite : " + viv + " / " + u.getSousUnites().size() + " soldats vivants");
+                }
+            }
+        }
+        if (lignes.isEmpty()) {
+            return;
         }
         Font titre = Theme.texte(Font.BOLD, 12.5f);
         Font corps = Theme.texte(Font.PLAIN, 12f);
-        g.setFont(corps);
         double largeur = 0;
         for (String l : lignes) {
             largeur = Math.max(largeur, g.getFontMetrics(titre).stringWidth(l));
@@ -1535,28 +1512,26 @@ public final class PanneauJeu extends JPanel {
         largeur += 26;
         double hauteur = lignes.size() * 17 + 14;
         double x = Math.min(sourisX + 18, LARGEUR - largeur - 8);
-        double y = Math.min(sourisY + 18, HAUTEUR - hauteur - 8);
+        double y = Math.min(sourisY + 18, BARRE_Y - hauteur - 8);
         RoundRectangle2D cadre = new RoundRectangle2D.Double(x, y, largeur, hauteur, 12, 12);
         g.setColor(new Color(8, 8, 20, 235));
         g.fill(cadre);
-        g.setColor(Theme.alpha(Theme.guilde(guildeDe.getOrDefault(u, 0)), 0.9));
+        g.setColor(Theme.alpha(Theme.guilde(guilde), 0.9));
         g.setStroke(new BasicStroke(1.4f));
         g.draw(cadre);
         for (int k = 0; k < lignes.size(); k++) {
-            boolean premiere = k == 0;
-            boolean derniere = k == lignes.size() - 1;
-            g.setFont(premiere ? titre : corps);
-            g.setColor(premiere ? Theme.OR_PALE : derniere ? Theme.alpha(Theme.TEXTE_DOUX, 0.8) : Theme.TEXTE);
+            g.setFont(k == 0 ? titre : corps);
+            g.setColor(k == 0 ? Theme.OR_PALE : Theme.TEXTE);
             g.drawString(lignes.get(k), (float) x + 13, (float) (y + 22 + k * 17));
         }
     }
 
     // ------------------------------------------------------------------
-    // Ecran de victoire
+    // Victoire
     // ------------------------------------------------------------------
 
     private void dessinerVictoire(Graphics2D g) {
-        g.setColor(new Color(4, 3, 12, 175));
+        g.setColor(new Color(4, 3, 12, 150));
         g.fillRect(0, 0, LARGEUR, HAUTEUR);
         Graphics2D r = (Graphics2D) g.create();
         r.translate(LARGEUR / 2.0, 250);
@@ -1569,29 +1544,22 @@ public final class PanneauJeu extends JPanel {
             rayon.lineTo(-40, -700);
             rayon.lineTo(40, -700);
             rayon.closePath();
-            r.setPaint(new GradientPaint(0, 0, Theme.alpha(k % 2 == 0 ? Theme.OR : cg, 0.16), 0, -600,
+            r.setPaint(new GradientPaint(0, 0, Theme.alpha(k % 2 == 0 ? Theme.OR : cg, 0.14), 0, -600,
                     Theme.alpha(cg, 0)));
             r.fill(rayon);
         }
         r.dispose();
         effets.dessiner(g);
+        Joueur vainqueur = joueurs.get(indexVainqueur);
         Icones.blason(g, indexVainqueur, LARGEUR / 2.0, 238 + Math.sin(temps * 2) * 6, 78, false);
-        texteLogo(g, "VICTOIRE", LARGEUR / 2.0, 450, 88);
-        texteCentre(g, vainqueur.getNom() + " et la Guilde " + vainqueur.getFaction() + " remportent le Clash !",
-                Theme.titre(22), Theme.TEXTE, LARGEUR / 2.0, 500);
-        Escouade armee = vainqueur.getArmee();
-        long survivants = ParcoursArbre.feuilles(armee).stream().filter(IUnite::estVivant).count();
-        texteCentre(g, "Triomphe en " + tour + " tours   -   PV restants " + armee.getPointsDeVie() + " / "
-                        + armee.getPointsDeVieMax() + "   -   Survivants " + survivants + " / "
-                        + ParcoursArbre.feuilles(armee).size(),
-                Theme.texte(Font.PLAIN, 15), Theme.TEXTE_DOUX, LARGEUR / 2.0, 535);
+        Decor.texteLogo(g, "VICTOIRE", LARGEUR / 2.0, 450, 88);
+        Decor.texteCentre(g, vainqueur.getNom() + " et la Guilde " + vainqueur.getFaction()
+                + " remportent le Clash !", Theme.titre(22), Theme.TEXTE, LARGEUR / 2.0, 500);
+        long survivants = soldats.stream().filter(s -> s.guilde == indexVainqueur && !s.mortAffiche).count();
+        long total = soldats.stream().filter(s -> s.guilde == indexVainqueur).count();
+        Decor.texteCentre(g, "Triomphe en " + tour + " tours   -   PV restants " + vainqueur.getArmee().getPointsDeVie()
+                        + " / " + vainqueur.getArmee().getPointsDeVieMax() + "   -   Survivants " + survivants + " / "
+                        + total, Theme.texte(Font.PLAIN, 15), Theme.TEXTE_DOUX, LARGEUR / 2.0, 535);
         dessinerBoutons(g);
-    }
-
-    private static void texteCentre(Graphics2D g, String s, Font f, Color c, double cx, double base) {
-        g.setFont(f);
-        FontMetrics fm = g.getFontMetrics();
-        g.setColor(c);
-        g.drawString(s, (float) (cx - fm.stringWidth(s) / 2.0), (float) base);
     }
 }

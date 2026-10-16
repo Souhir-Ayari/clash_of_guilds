@@ -155,3 +155,8 @@ même mécanisme sert à `getPointsDeVie()`, `getPuissanceAttaque()`, `getCout()
   d'escouades imbriquées et recrutement ; le budget restant = `500 − armee.getCout()`
   (calcul récursif).
 - **Gestion avancée des cycles** : voir Q4.
+- **Défense récursive** : `IUnite.defendre(int bonus)` est une nouvelle opération du Composite ;
+  `Escouade` la transmet à tous ses membres, chaque feuille gagne +10 d'armure jusqu'au prochain
+  tour de son joueur. Elle a été ajoutée sans toucher au moteur de combat.
+- **Champ de bataille 2D** : trois armées de 10 soldats animés (course et coup d'épée, flèches,
+  orbes, armures, aura de soin) qui ne font que mettre en scène les résultats du modèle.

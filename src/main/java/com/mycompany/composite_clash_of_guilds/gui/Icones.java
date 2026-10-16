@@ -26,7 +26,7 @@ import java.awt.geom.RoundRectangle2D;
  */
 final class Icones {
 
-    static final int EPEE = 0, CIBLE = 1, PLUS = 2, EPEES = 3, COURONNE = 4, OEIL = 5, QUITTER = 6, RETOUR = 7;
+    static final int EPEE = 0, CIBLE = 1, PLUS = 2, EPEES = 3, COURONNE = 4, OEIL = 5, QUITTER = 6, RETOUR = 7, BOUCLIER = 8;
 
     private Icones() {
     }
@@ -297,6 +297,17 @@ final class Icones {
                 p.quadTo(0, 0.85, -0.95, 0);
                 g.draw(p);
                 g.fill(new Ellipse2D.Double(-0.3, -0.3, 0.6, 0.6));
+            }
+            case BOUCLIER -> {
+                Path2D b = new Path2D.Double();
+                b.moveTo(-0.75, -0.8);
+                b.quadTo(0, -0.6, 0.75, -0.8);
+                b.lineTo(0.75, 0);
+                b.quadTo(0.7, 0.6, 0, 0.95);
+                b.quadTo(-0.7, 0.6, -0.75, 0);
+                b.closePath();
+                g.draw(b);
+                g.draw(new Line2D.Double(0, -0.6, 0, 0.8));
             }
             case RETOUR -> {
                 g.draw(new Arc2D.Double(-0.7, -0.7, 1.4, 1.4, 90, 270, Arc2D.OPEN));
