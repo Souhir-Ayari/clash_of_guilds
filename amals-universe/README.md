@@ -12,6 +12,10 @@ An interactive birthday card for Amal, made to be opened on a phone. Everything 
 6. **A Letter For You**: a letter that writes itself line by line (with a "show the whole letter" button).
 7. **The Finale**: blow out the candle, confetti, final message.
 
+## Her song
+
+The card plays "Falling For Your Eyes" (DA TI) softly in the background, starting on her first tap. It expects the file `song.mp3` next to `index.html`. The MP3 is not committed (copyrighted music in a public repo); add it yourself when publishing. Volume is `CONFIG.song.volume` (0.22).
+
 ## Personalize it
 
 Open `index.html` and edit the `CONFIG` object at the top of the `<script>`:

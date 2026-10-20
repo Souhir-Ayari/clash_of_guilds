@@ -619,7 +619,7 @@ const CONFIG = {
   name: "Amal",
   from: "Souhir",                 // your first name, shown under the letters
   // Her song. Put the MP3 in `file` and it plays softly in the background; without a file, the card links to YouTube.
-  song: { title: "Falling For Your Eyes", artist: "DA TI", file: "", volume: 0.25,
+  song: { title: "Falling For Your Eyes", artist: "DA TI", file: "song.mp3", volume: 0.22,
           link: "https://www.youtube.com/results?search_query=DA+TI+Falling+For+Your+Eyes",
           quote: "This one is for you. Let it play softly while you explore." },
   moods: [
@@ -725,7 +725,7 @@ function go(i) {
   if (step === "art") sizeCanvas();
   if (step === "quiz" && !quizStarted) renderQuestion();
 }
-document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => go(current + 1)));
+document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => { softStart(); go(current + 1); }));
 $("#backBtn").addEventListener("click", () => go(current - 1));
 
 /* ---------------- 1. invitation ---------------- */
@@ -736,6 +736,7 @@ $("#backBtn").addEventListener("click", () => go(current - 1));
 })();
 $("#envelope").addEventListener("click", (e) => {
   const env = e.currentTarget;
+  softStart();
   env.classList.toggle("open");
   $("#tapHint").textContent = env.classList.contains("open") ? "Your adventure starts below" : "Tap the envelope";
 });
@@ -750,8 +751,17 @@ const SONGS = {
              prog: [[0,4,7,14],[2,6,9,13],[4,7,11,14],[2,6,9,13]], pat: [0,2,3,1,2,0,3,2], len: .7 }
 };
 let audio = null, playing = null, timer = null, step = 0, nextTime = 0;
-const songEl = new Audio(); let songOn = false;
-if (CONFIG.song.file) { songEl.src = CONFIG.song.file; songEl.loop = true; songEl.preload = "auto"; }
+const songEl = new Audio(); let songOn = false, songNode = null, songReady = null, userStopped = false;
+songEl.loop = true; songEl.preload = "auto";
+// Load the song as a blob so its volume can be set through Web Audio (iPhones ignore audio.volume).
+function loadSong() {
+  if (songReady) return songReady;
+  songReady = fetch(CONFIG.song.file).then((r) => (r.ok ? r.blob() : Promise.reject()))
+    .then((b) => { songEl.src = URL.createObjectURL(b); return true; })
+    .catch(() => { songEl.src = CONFIG.song.file; return false; });
+  return songReady;
+}
+if (CONFIG.song.file) loadSong();
 const SONG_MOOD = { id: "song", title: CONFIG.song.title, text: `${CONFIG.song.artist} · a song you love`, color: "#C9B3E6", quote: CONFIG.song.quote };
 const ALL_MOODS = CONFIG.song.file ? [SONG_MOOD, ...CONFIG.moods] : CONFIG.moods;
 function initAudio() {
@@ -763,7 +773,8 @@ function initAudio() {
   const wet = ctx.createGain(); wet.gain.value = 0.35;
   delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(master);
   master.connect(ctx.destination);
-  audio = { ctx, master, delay };
+  const songGain = ctx.createGain(); songGain.gain.value = CONFIG.song.volume; songGain.connect(ctx.destination);
+  audio = { ctx, master, delay, songGain };
 }
 const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 function tone(midi, t, dur, wave, cutoff, vol) {
@@ -793,8 +804,22 @@ function play(id) {
   clearInterval(timer); timer = null;
   playing = id;
   if (id === "song") {
-    songOn = true; songEl.volume = CONFIG.song.volume;
-    songEl.play().catch(() => { songOn = false; syncMusicUI(); });
+    songOn = true;
+    initAudio(); audio.ctx.resume();
+    loadSong().then((isBlob) => {
+      if (!songOn) return;
+      let routed = false;
+      if (isBlob) {
+        try {
+          if (!songNode) { songNode = audio.ctx.createMediaElementSource(songEl); songNode.connect(audio.songGain); }
+          const t = audio.ctx.currentTime, g = audio.songGain.gain;
+          g.cancelScheduledValues(t); g.setValueAtTime(0.0001, t); g.linearRampToValueAtTime(CONFIG.song.volume, t + 2.5);
+          routed = true;
+        } catch (e) { routed = false; }
+      }
+      if (!routed) songEl.volume = CONFIG.song.volume;
+      return songEl.play();
+    }).catch(() => { songOn = false; syncMusicUI(); });
   } else {
     songEl.pause(); songOn = false;
     initAudio(); audio.ctx.resume();
@@ -834,12 +859,18 @@ ALL_MOODS.forEach((m) => {
   b.className = "mood"; b.dataset.id = m.id; b.setAttribute("aria-pressed", "false");
   b.innerHTML = `<span class="vinyl" style="--c:${m.color}"></span><span class="mood-body"><span class="mood-title">${m.title}</span><span class="mood-text">${m.text}</span></span><span class="play"><svg><use href="#i-play"/></svg></span>`;
   b.addEventListener("click", () => {
-    if (playing === m.id && isOn()) stop(); else { play(m.id); lastMood = m.id; }
+    if (playing === m.id && isOn()) { stop(); userStopped = true; } else { play(m.id); lastMood = m.id; userStopped = false; }
     $("#moodQuote").textContent = `“${m.quote}”`;
   });
   moodList.appendChild(b);
 });
-$("#soundBtn").addEventListener("click", () => { if (isOn()) stop(); else play(playing || lastMood); });
+$("#soundBtn").addEventListener("click", () => { if (isOn()) { stop(); userStopped = true; } else { play(playing || lastMood); userStopped = false; } });
+// Her song starts softly on her first tap (phones only allow sound after a touch).
+function softStart() {
+  if (!CONFIG.song.file || userStopped || isOn()) return;
+  play("song"); lastMood = "song";
+  $("#moodQuote").textContent = `“${CONFIG.song.quote}”`;
+}
 
 /* ---------------- 3. quiz ---------------- */
 let qi = 0, picks = [], quizStarted = false;
