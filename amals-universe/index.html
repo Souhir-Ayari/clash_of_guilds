@@ -398,6 +398,10 @@ body { transition: background .8s, color .8s; }
 .reveal > *:nth-child(2) { animation-delay: .9s; }
 .reveal > *:nth-child(3) { animation-delay: 1.6s; }
 .reveal > *:nth-child(4) { animation-delay: 2.3s; }
+.reveal > *:nth-child(5) { animation-delay: 2.8s; }
+.late { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 12px; }
+.letter { color: var(--plum); scroll-margin-top: 90px; }
+.letter .ps-title { font-family: var(--f-display); font-style: italic; font-size: 22px; line-height: 1.3; margin-bottom: 18px; }
 body.dusk .btn { background: var(--paper); color: var(--plum); }
 body.dusk .btn.soft { background: #43354F; color: var(--paper); }
 #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15; }
@@ -593,6 +597,20 @@ body.dusk .btn.soft { background: #43354F; color: var(--paper); }
           <button class="btn soft" id="seeArtBtn">See my artwork</button>
           <button class="btn" id="againBtn">Celebrate again</button>
         </div>
+        <div class="late">
+          <p class="tap-hint" id="lateHint" style="color:#D9CDE6">Wait… there’s one more letter</p>
+          <div class="letter-env" id="lateEnvWrap" style="margin-top:20px">
+            <button class="envelope" id="lateEnv" aria-label="Open the last letter">
+              <span class="env-back"></span>
+              <span class="env-letter">P.S.</span>
+              <span class="env-front"></span>
+              <span class="env-flap"></span>
+              <span class="seal"><svg><use href="#i-heart"/></svg></span>
+            </button>
+          </div>
+          <article class="letter" id="lateLetter" hidden></article>
+          <button class="link-btn" id="lateSkip" hidden>Show the whole letter</button>
+        </div>
         <button class="link-btn" id="restartBtn">Start the card from the beginning</button>
       </div>
     </section>
@@ -615,7 +633,7 @@ body.dusk .btn.soft { background: #43354F; color: var(--paper); }
    ========================================================= */
 const CONFIG = {
   name: "Amal",
-  from: "",                       // your first name, shown under the letter (optional)
+  from: "Souhir",                 // your first name, shown under the letters
   moods: [
     { id: "main",   title: "The Main Character", text: "An upbeat track for your lively, social side.", color: "#F4CBD9",
       quote: "You have this way of bringing life wherever you go." },
@@ -645,6 +663,15 @@ const CONFIG = {
     "Happy birthday, Amal."
   ],
   signOff: "With all my friendship",
+  lateTitle: "P.S. A late little confession",
+  lateLetter: [
+    "Amal,",
+    "You may have noticed: this card arrives a little after the day itself. The date slipped past me. You never did.",
+    "Some days run faster than we do. Mine ran so fast that your birthday went by before I could stop and celebrate it the way you deserve. Maybe that’s why I wanted to take my time with this one. Every color, every note and every word here was chosen slowly, thinking of you.",
+    "A birthday is one day a year. What you mean to me lasts all the other days too.",
+    "So see this as a celebration that refused to be rushed. A little late, yes, but made with all the time and care I have for you.",
+    "And next year, consider yourself warned: I’ll be the very first to say it."
+  ],
   finale: [
     "A new year, new colors, new songs and so many things to discover.",
     "Keep filling the world with your energy, your creativity and your unique way of connecting with people.",
@@ -1051,6 +1078,27 @@ function finishLetter() {
 }
 $("#letterSkip").addEventListener("click", finishLetter);
 
+/* ---------------- P.S. late letter (inside the finale) ---------------- */
+const late = $("#lateLetter");
+late.innerHTML = `<p class="ps-title" style="--i:0">${CONFIG.lateTitle}</p>` +
+  CONFIG.lateLetter.map((t, i) => `<p style="--i:${i + 1}" class="${i === 0 ? "salute" : ""}">${t}</p>`).join("") +
+  `<p class="sign" style="--i:${CONFIG.lateLetter.length + 1}">Always yours,<br>${CONFIG.from}</p>`;
+let lateTimer;
+function finishLate() { clearTimeout(lateTimer); late.classList.remove("writing"); $("#lateSkip").hidden = true; }
+$("#lateEnv").addEventListener("click", (e) => {
+  const env = e.currentTarget;
+  if (env.classList.contains("open")) return;
+  env.classList.add("open");
+  setTimeout(() => {
+    $("#lateEnvWrap").hidden = true; $("#lateHint").hidden = true;
+    late.hidden = false; late.classList.add("writing");
+    $("#lateSkip").hidden = reduceMotion;
+    lateTimer = setTimeout(finishLate, reduceMotion ? 0 : (CONFIG.lateLetter.length + 2) * 1600);
+    late.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  }, reduceMotion ? 0 : 1100);
+});
+$("#lateSkip").addEventListener("click", finishLate);
+
 /* ---------------- 7. finale ---------------- */
 $("#finalMsg").innerHTML = CONFIG.finale.map((t) => `<p>${t}</p>`).join("");
 $("#finalPart").querySelector(".final-name").textContent = `Happy Birthday, ${CONFIG.name}!`;
@@ -1073,6 +1121,7 @@ $("#restartBtn").addEventListener("click", () => {
   $("#cake").classList.remove("out"); $("#wishBtn").disabled = false;
   $("#wishPart").style.display = "contents"; const fp = $("#finalPart"); fp.hidden = true; fp.style.display = "none";
   $("#envelope").classList.remove("open"); $("#tapHint").textContent = "Tap the envelope";
+  finishLate(); $("#lateEnv").classList.remove("open"); $("#lateEnvWrap").hidden = false; $("#lateHint").hidden = false; late.hidden = true;
   go(0);
 });
 
