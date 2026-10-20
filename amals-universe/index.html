@@ -317,24 +317,49 @@ a.mood { text-decoration: none; color: inherit; }
 .overlay-card img { width: 100%; max-width: 100%; border: 10px solid var(--paper); border-bottom-width: 30px; box-shadow: var(--shadow-paper); -webkit-touch-callout: default; }
 .overlay-card h3 { margin: 0; font-family: var(--f-display); font-size: 24px; font-weight: 600; }
 
-/* ---------- 5. little things ---------- */
-.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: 100%; }
-.note-card { perspective: 900px; border: 0; padding: 0; background: none; min-height: 210px; text-align: left; }
-.note-card .inner { position: relative; width: 100%; height: 100%; min-height: 210px; transition: transform .7s cubic-bezier(.3,.9,.3,1); transform-style: preserve-3d; }
-.note-card.open .inner { transform: rotateY(180deg); }
-.face {
-  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 10px;
-  padding: 14px; display: flex; flex-direction: column; box-shadow: var(--shadow-paper);
+/* ---------- 5. little things: a night sky ---------- */
+.sky {
+  position: relative; width: 100%; max-width: 100%; aspect-ratio: 1; border-radius: 28px; overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, #4A3A5E, #2A2033 60%, #1E1726);
+  box-shadow: 0 18px 40px -18px rgba(53,40,63,.7);
 }
-.face.front { background: var(--c); align-items: center; justify-content: center; gap: 10px; text-align: center; overflow: hidden; }
-.face.front::before { content: ""; position: absolute; inset: 0; background: linear-gradient(150deg, rgba(255,255,255,.35), transparent 50%); clip-path: polygon(0 0, 100% 0, 50% 45%); }
-.face.front .mini-seal { width: 34px; height: 34px; border-radius: 50%; background: var(--wax); display: grid; place-items: center; color: var(--rose); position: relative; }
-.face.front .mini-seal svg { width: 14px; height: 14px; }
-.face.front b { font-family: var(--f-hand); font-size: 24px; font-weight: 700; line-height: 1.05; position: relative; }
-.face.front small { font-size: 12px; color: var(--plum-soft); position: relative; }
-.face.back { background: var(--paper); transform: rotateY(180deg); gap: 6px; overflow-y: auto; }
-.face.back b { font-family: var(--f-hand); font-size: 21px; line-height: 1; color: var(--lilac); }
-.face.back p { font-size: 14px; line-height: 1.45; }
+.sky svg.lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sky .dust circle { fill: #FFFBF6; animation: twinkle 3s ease-in-out infinite; }
+@keyframes twinkle { 50% { opacity: .15; } }
+.heart-path { fill: none; stroke: rgba(255,251,246,.16); stroke-width: .5; stroke-dasharray: 1.5 2.5; }
+.heart-glow {
+  fill: rgba(244,203,217,0); stroke: #F6D9A8; stroke-width: .9; stroke-linecap: round;
+  stroke-dasharray: 300; stroke-dashoffset: 300; filter: drop-shadow(0 0 2px #F6D9A8);
+  transition: stroke-dashoffset 2.6s ease, fill 1.5s ease 2.4s;
+}
+.sky.complete .heart-glow { stroke-dashoffset: 0; fill: rgba(244,203,217,.14); }
+.star-btn {
+  position: absolute; width: 60px; height: 60px; margin: -30px 0 0 -30px; border: 0; background: none; padding: 0;
+  display: grid; place-items: center; border-radius: 50%;
+}
+.star-btn svg { width: 30px; height: 30px; color: #F6D27A; filter: drop-shadow(0 0 6px rgba(246,210,122,.9)); transition: transform .4s, color .4s; animation: pulse 1.8s ease-in-out infinite; }
+.star-btn::before { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 1.5px solid rgba(246,210,122,.75); animation: ring 1.8s ease-out infinite; }
+@keyframes ring { from { transform: scale(.5); opacity: 1; } to { transform: scale(1.45); opacity: 0; } }
+@keyframes pulse { 50% { transform: scale(1.18); } }
+.star-btn.seen::before { display: none; }
+.star-btn.seen svg { color: #FFFBF6; animation: none; filter: drop-shadow(0 0 10px #FFFBF6) drop-shadow(0 0 18px #F6D27A); }
+.star-btn[aria-pressed="true"] svg { transform: scale(1.35); }
+.star-label { position: absolute; top: 50px; white-space: nowrap; font-family: var(--f-hand); font-size: 18px; color: #E9E0F1; opacity: 0; transition: opacity .4s; pointer-events: none; }
+.star-btn.seen .star-label { opacity: .9; }
+.sky-center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 60%; text-align: center;
+  font-family: var(--f-display); font-style: italic; font-weight: 600; font-size: clamp(18px, 5.4vw, 24px); line-height: 1.25; color: #FFFBF6;
+  opacity: 0; transition: opacity 1.2s ease 2.6s; text-shadow: 0 0 18px rgba(246,210,122,.6); pointer-events: none;
+}
+.sky.complete .sky-center { opacity: 1; }
+.star-note {
+  width: 100%; background: var(--paper); border-radius: 18px; padding: 18px 20px; box-shadow: var(--shadow-paper);
+  text-align: left; min-height: 140px; display: flex; flex-direction: column; gap: 6px; justify-content: center;
+}
+.star-note b { font-family: var(--f-hand); font-size: 27px; color: var(--lilac); line-height: 1.1; }
+.star-note p { font-size: 15.5px; }
+.star-note .hint { font-family: var(--f-hand); font-size: 22px; color: var(--plum-soft); text-align: center; }
+.star-note.flash { animation: enter .5s both; }
 .notes-count { font-family: var(--f-hand); font-size: 22px; color: var(--plum-soft); }
 
 /* ---------- 6. letter ---------- */
@@ -550,9 +575,17 @@ body.dusk .btn.soft { background: #43354F; color: var(--paper); }
     <section class="screen" data-step="memories" aria-label="Little things about you">
       <p class="eyebrow">Chapter five</p>
       <h2>Little things about you</h2>
-      <p class="lede">Four envelopes, four little truths. Tap each one to open it.</p>
-      <div class="notes-grid" id="notesGrid"></div>
-      <p class="notes-count" id="notesCount">0 of 4 opened</p>
+      <p class="lede">Each star in this little sky holds something I love about you. Tap the glowing stars to light them up.</p>
+      <div class="sky" id="sky">
+        <svg class="lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <g class="dust" id="dust"></g>
+          <path class="heart-path" d="M50 88 C20 66 8 50 10 34 C12 20 24 13 35 14 C43 15 48 21 50 28 C52 21 57 15 65 14 C76 13 88 20 90 34 C92 50 80 66 50 88 Z"/>
+          <path class="heart-glow" pathLength="300" d="M50 88 C20 66 8 50 10 34 C12 20 24 13 35 14 C43 15 48 21 50 28 C52 21 57 15 65 14 C76 13 88 20 90 34 C92 50 80 66 50 88 Z"/>
+        </svg>
+        <p class="sky-center">And all of it is you, Amal.</p>
+      </div>
+      <div class="star-note" id="starNote" aria-live="polite"><p class="hint">Tap a glowing star to read what it holds</p></div>
+      <p class="notes-count" id="notesCount">0 of 4 stars lit</p>
       <button class="btn" data-next>Next <svg><use href="#i-arrow"/></svg></button>
     </section>
 
@@ -631,13 +664,13 @@ const CONFIG = {
       quote: "You have a thousand ways of seeing things. That’s what makes your universe unique." }
   ],
   notes: [
-    { title: "The way you connect", color: "#F4CBD9",
+    { title: "The way you connect", star: "Connection", color: "#F4CBD9",
       text: "I love how you build connections and make every conversation come alive. You have your very own way of being interested in people." },
-    { title: "Your creative side", color: "#E7D9F7",
+    { title: "Your creative side", star: "Creativity", color: "#E7D9F7",
       text: "I love your artistic curiosity, and how you find inspiration in things other people don’t even notice." },
-    { title: "Your energy", color: "#B9C9E8",
+    { title: "Your energy", star: "Energy", color: "#B9C9E8",
       text: "You bring movement, ideas and spontaneity. It’s a beautiful quality, and I hope you always keep that wish to live fully." },
-    { title: "Our friendship", color: "#F7DDC4",
+    { title: "Our friendship", star: "Friendship", color: "#F7DDC4",
       text: "What I treasure in our friendship are all those little moments that seem ordinary but end up meaning so much." }
   ],
   letter: [
@@ -1064,20 +1097,30 @@ $("#keepBtn").addEventListener("click", showArt);
 $("#ovClose").addEventListener("click", () => ($("#overlay").hidden = true));
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") $("#overlay").hidden = true; });
 
-/* ---------------- 5. little things ---------------- */
-const grid = $("#notesGrid"); let opened = new Set();
+/* ---------------- 5. little things: a night sky ---------------- */
+const sky = $("#sky"), dust = $("#dust");
+for (let i = 0; i < 48; i++) {
+  const x = (i * 37.7) % 100, y = (i * 61.3 + 13) % 100, r = .15 + ((i * 7) % 5) / 20;
+  dust.insertAdjacentHTML("beforeend", `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(2)}" style="animation-delay:${-(i % 7) * .45}s"/>`);
+}
+const STAR_POS = [[35, 15], [65, 15], [13, 38], [87, 38]];
+const seen = new Set();
 CONFIG.notes.forEach((n, i) => {
   const b = document.createElement("button");
-  b.className = "note-card"; b.setAttribute("aria-expanded", "false");
-  b.innerHTML = `<span class="inner">
-    <span class="face front" style="--c:${n.color}"><span class="mini-seal"><svg><use href="#i-heart"/></svg></span><b>${n.title}</b><small>Tap to open</small></span>
-    <span class="face back"><b>${n.title}</b><p>${n.text}</p></span></span>`;
+  b.className = "star-btn"; b.style.left = STAR_POS[i][0] + "%"; b.style.top = STAR_POS[i][1] + "%";
+  b.setAttribute("aria-pressed", "false"); b.setAttribute("aria-label", `Star: ${n.title}`);
+  b.innerHTML = `<svg aria-hidden="true"><use href="#i-star"/></svg><span class="star-label">${n.star}</span>`;
   b.addEventListener("click", () => {
-    b.classList.toggle("open"); b.setAttribute("aria-expanded", b.classList.contains("open"));
-    opened.add(i);
-    $("#notesCount").textContent = opened.size === CONFIG.notes.length ? "All opened. Every word is true." : `${opened.size} of ${CONFIG.notes.length} opened`;
+    seen.add(i); b.classList.add("seen");
+    sky.querySelectorAll(".star-btn").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    const note = $("#starNote");
+    note.innerHTML = `<b>${n.title}</b><p>${n.text}</p>`;
+    note.classList.remove("flash"); void note.offsetWidth; note.classList.add("flash");
+    const all = seen.size === CONFIG.notes.length;
+    $("#notesCount").textContent = all ? "Every star is lit. Look at the shape they make." : `${seen.size} of ${CONFIG.notes.length} stars lit`;
+    if (all) sky.classList.add("complete");
   });
-  grid.appendChild(b);
+  sky.appendChild(b);
 });
 
 /* ---------------- 6. letter ---------------- */

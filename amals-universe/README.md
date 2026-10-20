@@ -8,7 +8,7 @@ An interactive birthday card for Amal, made to be opened on a phone. Everything 
 2. **Her Soundtrack**: three moods (The Main Character, The Dreamer, The Artist). Music starts only when she presses a record; the button at the top right pauses it anywhere.
 3. **Personality quiz**: six questions. The result is computed from her answers and names her two strongest traits (e.g. "The Colorful Human Connector").
 4. **Amal, the Artist**: choose three colors, place stickers, draw with a finger. "Keep my creation" shows the image so she can save it (press and hold).
-5. **Little Things About You**: four envelopes with personal messages.
+5. **Little Things About You**: a night sky with four glowing stars; each one reveals a message, and once all are lit they draw a glowing heart.
 6. **A Letter For You**: a letter that writes itself line by line (with a "show the whole letter" button).
 7. **The Finale**: blow out the candle, confetti, final message.
 
