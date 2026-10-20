@@ -209,6 +209,7 @@ p { margin: 0; }
   background: var(--paper); box-shadow: var(--shadow-paper); transition: border-color .2s, transform .2s;
 }
 .mood[aria-pressed="true"] { border-color: var(--plum); }
+a.mood { text-decoration: none; color: inherit; }
 .mood:active { transform: scale(.98); }
 .vinyl {
   width: 72px; height: 72px; border-radius: 50%; position: relative;
@@ -617,6 +618,10 @@ body.dusk .btn.soft { background: #43354F; color: var(--paper); }
 const CONFIG = {
   name: "Amal",
   from: "Souhir",                 // your first name, shown under the letters
+  // Her song. Put the MP3 in `file` and it plays softly in the background; without a file, the card links to YouTube.
+  song: { title: "Falling For Your Eyes", artist: "DA TI", file: "", volume: 0.25,
+          link: "https://www.youtube.com/results?search_query=DA+TI+Falling+For+Your+Eyes",
+          quote: "This one is for you. Let it play softly while you explore." },
   moods: [
     { id: "main",   title: "The Main Character", text: "An upbeat track for your lively, social side.", color: "#F4CBD9",
       quote: "You have this way of bringing life wherever you go." },
@@ -745,10 +750,14 @@ const SONGS = {
              prog: [[0,4,7,14],[2,6,9,13],[4,7,11,14],[2,6,9,13]], pat: [0,2,3,1,2,0,3,2], len: .7 }
 };
 let audio = null, playing = null, timer = null, step = 0, nextTime = 0;
+const songEl = new Audio(); let songOn = false;
+if (CONFIG.song.file) { songEl.src = CONFIG.song.file; songEl.loop = true; songEl.preload = "auto"; }
+const SONG_MOOD = { id: "song", title: CONFIG.song.title, text: `${CONFIG.song.artist} · a song you love`, color: "#C9B3E6", quote: CONFIG.song.quote };
+const ALL_MOODS = CONFIG.song.file ? [SONG_MOOD, ...CONFIG.moods] : CONFIG.moods;
 function initAudio() {
   if (audio) return;
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const master = ctx.createGain(); master.gain.value = 0.16;
+  const master = ctx.createGain(); master.gain.value = 0.09;
   const delay = ctx.createDelay(); delay.delayTime.value = 0.33;
   const fb = ctx.createGain(); fb.gain.value = 0.32;
   const wet = ctx.createGain(); wet.gain.value = 0.35;
@@ -781,43 +790,56 @@ function schedule() {
   }
 }
 function play(id) {
-  initAudio();
-  audio.ctx.resume();
-  clearInterval(timer);
-  playing = id; step = 0; nextTime = audio.ctx.currentTime + 0.05;
-  timer = setInterval(schedule, 40); schedule();
+  clearInterval(timer); timer = null;
+  playing = id;
+  if (id === "song") {
+    songOn = true; songEl.volume = CONFIG.song.volume;
+    songEl.play().catch(() => { songOn = false; syncMusicUI(); });
+  } else {
+    songEl.pause(); songOn = false;
+    initAudio(); audio.ctx.resume();
+    step = 0; nextTime = audio.ctx.currentTime + 0.05;
+    timer = setInterval(schedule, 40); schedule();
+  }
   syncMusicUI();
 }
-function stop() { clearInterval(timer); timer = null; syncMusicUI(); }
-let lastMood = "dreamer";
+function stop() { clearInterval(timer); timer = null; songEl.pause(); songOn = false; syncMusicUI(); }
+const isOn = () => !!timer || songOn;
+let lastMood = CONFIG.song.file ? "song" : "dreamer";
 function syncMusicUI() {
-  const on = !!timer;
+  const on = isOn();
   const sb = $("#soundBtn");
   sb.setAttribute("aria-pressed", on);
   sb.setAttribute("aria-label", on ? "Pause music" : "Play music");
   sb.querySelector("use").setAttribute("href", on ? "#i-sound" : "#i-mute");
-  document.querySelectorAll(".mood").forEach((m) => {
+  document.querySelectorAll(".mood[data-id]").forEach((m) => {
     const sel = m.dataset.id === playing;
     m.setAttribute("aria-pressed", sel);
     m.classList.toggle("playing", sel && on);
     m.querySelector(".play use").setAttribute("href", sel && on ? "#i-pause" : "#i-play");
   });
   $("#nowLine").classList.toggle("playing-now", on);
-  const mood = CONFIG.moods.find((m) => m.id === playing);
+  const mood = ALL_MOODS.find((m) => m.id === playing);
   $("#nowText").textContent = on && mood ? `Now playing: ${mood.title}` : mood ? `Paused: ${mood.title}` : "Nothing playing yet";
 }
 const moodList = $("#moodList");
-CONFIG.moods.forEach((m) => {
+if (!CONFIG.song.file) {
+  const a = document.createElement("a");
+  a.className = "mood"; a.href = CONFIG.song.link; a.target = "_blank"; a.rel = "noopener";
+  a.innerHTML = `<span class="vinyl" style="--c:#C9B3E6"></span><span class="mood-body"><span class="mood-title">${CONFIG.song.title}</span><span class="mood-text">${CONFIG.song.artist} · a song you love. Opens on YouTube.</span></span><span class="play"><svg><use href="#i-arrow"/></svg></span>`;
+  moodList.appendChild(a);
+}
+ALL_MOODS.forEach((m) => {
   const b = document.createElement("button");
   b.className = "mood"; b.dataset.id = m.id; b.setAttribute("aria-pressed", "false");
   b.innerHTML = `<span class="vinyl" style="--c:${m.color}"></span><span class="mood-body"><span class="mood-title">${m.title}</span><span class="mood-text">${m.text}</span></span><span class="play"><svg><use href="#i-play"/></svg></span>`;
   b.addEventListener("click", () => {
-    if (playing === m.id && timer) stop(); else { play(m.id); lastMood = m.id; }
+    if (playing === m.id && isOn()) stop(); else { play(m.id); lastMood = m.id; }
     $("#moodQuote").textContent = `“${m.quote}”`;
   });
   moodList.appendChild(b);
 });
-$("#soundBtn").addEventListener("click", () => { if (timer) stop(); else play(playing || lastMood); });
+$("#soundBtn").addEventListener("click", () => { if (isOn()) stop(); else play(playing || lastMood); });
 
 /* ---------------- 3. quiz ---------------- */
 let qi = 0, picks = [], quizStarted = false;
